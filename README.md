@@ -148,7 +148,6 @@ def evaluate_your_task(messages: list, model_output: str, reference_output: str)
 
 - `evaluation_report_TIMESTAMP.json`: 详细评估结果
 - `evaluation_report_TIMESTAMP.txt`: 可读性报告
-- `badcases_TIMESTAMP.json`: Badcase详细信息
 
 ## 🤝 贡献指南
 
