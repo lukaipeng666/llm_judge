@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument('--max_workers', type=int, default=4, help='最大工作线程数')
     parser.add_argument('--badcase_threshold', type=float, default=0.5, help='Badcase判断阈值')
     parser.add_argument('--report_dir', type=str, default='./reports', help='报告输出目录')
-    parser.add_argument('--report_format', type=str, default='json', help='报告格式，逗号分隔')
+    parser.add_argument('--report_format', type=str, default='json, txt, badcases', help='报告格式，逗号分隔')
     parser.add_argument('--test-mode', action='store_true', help='测试模式，不实际调用API')
     parser.add_argument('--sample-size', type=int, default=0, help='只测试指定数量的样本，0表示全部测试')
     parser.add_argument('--checkpoint_path', type=str, default=None, help='断点续测文件输出保存路径')
