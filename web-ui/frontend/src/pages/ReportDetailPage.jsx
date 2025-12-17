@@ -28,20 +28,23 @@ import {
   FileTextOutlined,
   EyeOutlined,
 } from '@ant-design/icons'
-import { useReportStore } from '../stores'
+import useStore from '../stores'
 
 const { Title, Text, Paragraph } = Typography
 
 function ReportDetailPage() {
   const { dataset, model } = useParams()
   const navigate = useNavigate()
-  const { currentReport, loading, fetchReportDetail } = useReportStore()
+  const { currentReport, loading, fetchReportDetail } = useStore()
   const [selectedBadcase, setSelectedBadcase] = useState(null)
   const [badcaseModalVisible, setBadcaseModalVisible] = useState(false)
 
   useEffect(() => {
     if (dataset && model) {
-      fetchReportDetail(decodeURIComponent(dataset), decodeURIComponent(model))
+      fetchReportDetail(decodeURIComponent(dataset), decodeURIComponent(model)).then(data => {
+        console.log('Report detail loaded:', data)
+        console.log('Badcases count:', data?.badcases?.length)
+      })
     }
   }, [dataset, model])
 
@@ -71,6 +74,10 @@ function ReportDetailPage() {
 
   const { summary = {}, config = {}, badcases = [] } = currentReport
 
+  // 调试日志
+  console.log('currentReport:', currentReport)
+  console.log('Badcases from destructuring:', badcases)
+
   // Badcase 表格列
   const badcaseColumns = [
     {
@@ -78,6 +85,7 @@ function ReportDetailPage() {
       dataIndex: 'index',
       key: 'index',
       width: 80,
+      render: (text) => text ?? '-',
     },
     {
       title: '得分',
@@ -85,7 +93,7 @@ function ReportDetailPage() {
       key: 'score',
       width: 100,
       render: (score) => {
-        if (score === undefined) return '-'
+        if (score === undefined || score === null) return '-'
         const className = score >= 0.8 ? 'score-high' : 
                          score >= 0.5 ? 'score-medium' : 'score-low'
         return <span className={className}>{score.toFixed(4)}</span>
@@ -96,9 +104,20 @@ function ReportDetailPage() {
       dataIndex: 'user_input',
       key: 'user_input',
       ellipsis: true,
-      render: (text) => (
-        <Text ellipsis style={{ maxWidth: 300 }}>{text || '-'}</Text>
-      ),
+      render: (text) => {
+        // user_input 可能是数组或字符串
+        let displayText = ''
+        if (Array.isArray(text)) {
+          // 如果是消息数组，找到 user role 的内容
+          const userMsg = text.find(msg => msg.role === 'user')
+          displayText = userMsg?.content || JSON.stringify(text)
+        } else {
+          displayText = text || '-'
+        }
+        return (
+          <Text ellipsis style={{ maxWidth: 300 }}>{displayText}</Text>
+        )
+      },
     },
     {
       title: '模型输出',
@@ -165,7 +184,7 @@ function ReportDetailPage() {
           <Card bordered={false} className="stat-card stat-card-blue">
             <Statistic
               title={<span style={{ color: 'rgba(255,255,255,0.85)' }}>准确率</span>}
-              value={(summary.accuracy * 100).toFixed(2)}
+              value={((summary.accuracy || 0) * 100).toFixed(2)}
               suffix="%"
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: 'white' }}
@@ -207,6 +226,7 @@ function ReportDetailPage() {
       {/* 详细信息标签页 */}
       <Card bordered={false} className="card-shadow">
         <Tabs
+          defaultActiveKey="summary"
           items={[
             {
               key: 'summary',
@@ -334,7 +354,16 @@ function ReportDetailPage() {
               }}
             >
               <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                {selectedBadcase.user_input || '-'}
+                {(() => {
+                  const userInput = selectedBadcase.user_input
+                  if (Array.isArray(userInput)) {
+                    // 如果是消息数组，格式化显示
+                    return userInput.map((msg, idx) => 
+                      `[${msg.role}]: ${msg.content}`
+                    ).join('\n\n')
+                  }
+                  return userInput || '-'
+                })()}
               </pre>
             </Paragraph>
 

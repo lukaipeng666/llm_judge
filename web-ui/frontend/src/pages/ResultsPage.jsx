@@ -5,259 +5,155 @@ import {
   Col,
   Select,
   Typography,
-  Table,
-  Tag,
+  Button,
   Space,
   Spin,
   Empty,
-  Divider,
+  message,
 } from 'antd'
 import {
   BarChartOutlined,
-  TrophyOutlined,
-  RiseOutlined,
-  FallOutlined,
+  DeleteOutlined,
+  PlusOutlined,
 } from '@ant-design/icons'
-import { useReportStore } from '../stores'
+import { Radar } from '@ant-design/plots'
+import useStore from '../stores'
 
 const { Title, Text } = Typography
 const { Option } = Select
 
 function ResultsPage() {
-  const { reports, loading, fetchReports } = useReportStore()
-  const [selectedDatasets, setSelectedDatasets] = useState([])
-  const [selectedModels, setSelectedModels] = useState([])
+  const { reports, loading, fetchReports } = useStore()
+  
+
+  
+  // 雷达图分析状态
+  const [radarMetrics, setRadarMetrics] = useState([]) // [{name, reports: [...]}]
+  const [radarModelColors, setRadarModelColors] = useState({}) // {modelName: color}
+  const [radarChartData, setRadarChartData] = useState([])
+  const [radarRendered, setRadarRendered] = useState(false)
 
   useEffect(() => {
     fetchReports()
   }, [])
 
-  // 获取唯一的数据集和模型列表
-  const datasets = useMemo(() => {
-    return [...new Set(reports.map(r => r.dataset))].sort()
+  // 获取所有可用指标（从报告摘要中提取的数值字段）
+  const availableMetrics = useMemo(() => {
+    const metrics = new Set()
+    reports.forEach(report => {
+      if (report.summary) {
+        Object.keys(report.summary).forEach(key => {
+          if (typeof report.summary[key] === 'number') {
+            metrics.add(key)
+          }
+        })
+      }
+    })
+    return Array.from(metrics).sort()
   }, [reports])
 
-  const models = useMemo(() => {
-    return [...new Set(reports.map(r => r.model))].sort()
-  }, [reports])
 
-  // 过滤报告
-  const filteredReports = useMemo(() => {
-    let filtered = reports
 
-    if (selectedDatasets.length > 0) {
-      filtered = filtered.filter(r => selectedDatasets.includes(r.dataset))
+  // 从雷达图选定的指标报告中自动提取可用模型
+  const availableModelsFromMetrics = useMemo(() => {
+    const models = new Set()
+    radarMetrics.forEach(metric => {
+      metric.reports.forEach(reportId => {
+        const report = reports.find(r => r.id === reportId)
+        if (report) {
+          models.add(report.model)
+        }
+      })
+    })
+    return Array.from(models).sort()
+  }, [radarMetrics, reports])
+
+  // 初始化模型颜色（当有新模型时）
+  const initializeModelColors = () => {
+    const colors = ['#1890ff', '#ff4d4f', '#52c41a', '#faad14', '#13c2c2', '#722ed1']
+    const newColors = { ...radarModelColors }
+    availableModelsFromMetrics.forEach((model, idx) => {
+      if (!newColors[model]) {
+        newColors[model] = colors[idx % colors.length]
+      }
+    })
+    setRadarModelColors(newColors)
+  }
+
+  // 更新模型颜色
+  const updateModelColor = (model, color) => {
+    setRadarModelColors({ ...radarModelColors, [model]: color })
+  }
+
+  // 添加雷达图指标
+  const addRadarMetric = () => {
+    setRadarMetrics([...radarMetrics, { name: '', reports: [] }])
+  }
+
+  // 更新雷达图指标名称
+  const updateRadarMetricName = (index, name) => {
+    const newMetrics = [...radarMetrics]
+    newMetrics[index].name = name
+    setRadarMetrics(newMetrics)
+  }
+
+  // 更新雷达图指标报告
+  const updateRadarMetricReports = (index, reportIds) => {
+    const newMetrics = [...radarMetrics]
+    newMetrics[index].reports = reportIds
+    setRadarMetrics(newMetrics)
+  }
+
+  // 删除雷达图指标
+  const deleteRadarMetric = (index) => {
+    setRadarMetrics(radarMetrics.filter((_, i) => i !== index))
+  }
+
+  // 渲染雷达图
+  const renderRadar = () => {
+    // 检查是否有效的指标
+    const validMetrics = radarMetrics.filter(m => m.name && m.reports.length > 0)
+    if (validMetrics.length === 0) {
+      message.warning('请至少添加一个指标并选择报告')
+      return
     }
 
-    if (selectedModels.length > 0) {
-      filtered = filtered.filter(r => selectedModels.includes(r.model))
+    // 获取可用模型
+    if (availableModelsFromMetrics.length === 0) {
+      message.warning('未找到任何模型，请检查指标报告选择')
+      return
     }
 
-    return filtered
-  }, [reports, selectedDatasets, selectedModels])
+    // 初始化模型颜色
+    initializeModelColors()
 
-  // 按模型聚合数据
-  const modelStats = useMemo(() => {
-    const stats = {}
+    const chartData = []
 
-    filteredReports.forEach(report => {
-      const model = report.model
-      if (!stats[model]) {
-        stats[model] = {
-          model,
-          reports: [],
-          avgAccuracy: 0,
-          avgScore: 0,
-          totalTests: 0,
-          datasets: new Set(),
+    // 对每个模型生成数据，无论指标名称是什么，都取 accuracy 字段
+    availableModelsFromMetrics.forEach(model => {
+      radarMetrics.forEach(metric => {
+        if (metric.name && metric.reports.length > 0) {
+          // 计算该模型在该指标下的平均值（只取 accuracy）
+          const values = metric.reports
+            .map(reportId => {
+              const report = reports.find(r => r.id === reportId && r.model === model)
+              return report ? report.summary?.accuracy : null
+            })
+            .filter(v => v !== null)
+
+          const avg = values.length > 0 ? values.reduce((a, b) => a + b) / values.length : 0
+          chartData.push({
+            model,
+            metric: metric.name,
+            value: avg,
+          })
         }
-      }
-      stats[model].reports.push(report)
-      stats[model].datasets.add(report.dataset)
-      stats[model].totalTests += report.summary?.total_count || 0
-    })
-
-    // 计算平均值
-    Object.values(stats).forEach(stat => {
-      const accuracies = stat.reports.map(r => r.summary?.accuracy || 0)
-      const scores = stat.reports.map(r => r.summary?.average_score || 0)
-      stat.avgAccuracy = accuracies.reduce((a, b) => a + b, 0) / accuracies.length
-      stat.avgScore = scores.reduce((a, b) => a + b, 0) / scores.length
-      stat.datasetCount = stat.datasets.size
-    })
-
-    return Object.values(stats).sort((a, b) => b.avgAccuracy - a.avgAccuracy)
-  }, [filteredReports])
-
-  // 按数据集聚合数据
-  const datasetStats = useMemo(() => {
-    const stats = {}
-
-    filteredReports.forEach(report => {
-      const dataset = report.dataset
-      if (!stats[dataset]) {
-        stats[dataset] = {
-          dataset,
-          reports: [],
-          models: new Set(),
-          bestModel: null,
-          bestAccuracy: 0,
-        }
-      }
-      stats[dataset].reports.push(report)
-      stats[dataset].models.add(report.model)
-
-      const accuracy = report.summary?.accuracy || 0
-      if (accuracy > stats[dataset].bestAccuracy) {
-        stats[dataset].bestAccuracy = accuracy
-        stats[dataset].bestModel = report.model
-      }
-    })
-
-    Object.values(stats).forEach(stat => {
-      stat.modelCount = stat.models.size
-      const accuracies = stat.reports.map(r => r.summary?.accuracy || 0)
-      stat.avgAccuracy = accuracies.reduce((a, b) => a + b, 0) / accuracies.length
-    })
-
-    return Object.values(stats).sort((a, b) => b.avgAccuracy - a.avgAccuracy)
-  }, [filteredReports])
-
-  // 模型排行榜列
-  const modelRankColumns = [
-    {
-      title: '排名',
-      key: 'rank',
-      width: 80,
-      render: (_, __, index) => {
-        if (index === 0) return <TrophyOutlined style={{ color: '#faad14', fontSize: 20 }} />
-        if (index === 1) return <TrophyOutlined style={{ color: '#bfbfbf', fontSize: 18 }} />
-        if (index === 2) return <TrophyOutlined style={{ color: '#d48806', fontSize: 16 }} />
-        return <span style={{ color: '#999' }}>#{index + 1}</span>
-      },
-    },
-    {
-      title: '模型',
-      dataIndex: 'model',
-      key: 'model',
-      render: (text) => <Tag color="purple" style={{ fontSize: 13 }}>{text}</Tag>,
-    },
-    {
-      title: '平均准确率',
-      dataIndex: 'avgAccuracy',
-      key: 'avgAccuracy',
-      sorter: (a, b) => a.avgAccuracy - b.avgAccuracy,
-      render: (value) => {
-        const percent = (value * 100).toFixed(2)
-        const className = value >= 0.8 ? 'score-high' : value >= 0.5 ? 'score-medium' : 'score-low'
-        return <span className={className}>{percent}%</span>
-      },
-    },
-    {
-      title: '平均分',
-      dataIndex: 'avgScore',
-      key: 'avgScore',
-      render: (value) => value?.toFixed(4) || '-',
-    },
-    {
-      title: '测试数据集',
-      dataIndex: 'datasetCount',
-      key: 'datasetCount',
-      render: (value) => <Tag color="blue">{value} 个</Tag>,
-    },
-    {
-      title: '测试样本数',
-      dataIndex: 'totalTests',
-      key: 'totalTests',
-      render: (value) => value.toLocaleString(),
-    },
-  ]
-
-  // 数据集排行列
-  const datasetRankColumns = [
-    {
-      title: '数据集',
-      dataIndex: 'dataset',
-      key: 'dataset',
-      render: (text) => <Tag color="geekblue" style={{ fontSize: 13 }}>{text}</Tag>,
-    },
-    {
-      title: '平均准确率',
-      dataIndex: 'avgAccuracy',
-      key: 'avgAccuracy',
-      sorter: (a, b) => a.avgAccuracy - b.avgAccuracy,
-      render: (value) => {
-        const percent = (value * 100).toFixed(2)
-        const className = value >= 0.8 ? 'score-high' : value >= 0.5 ? 'score-medium' : 'score-low'
-        return <span className={className}>{percent}%</span>
-      },
-    },
-    {
-      title: '最佳模型',
-      dataIndex: 'bestModel',
-      key: 'bestModel',
-      render: (text, record) => (
-        <Space>
-          <Tag color="gold">{text}</Tag>
-          <Text type="secondary">({(record.bestAccuracy * 100).toFixed(2)}%)</Text>
-        </Space>
-      ),
-    },
-    {
-      title: '测试模型数',
-      dataIndex: 'modelCount',
-      key: 'modelCount',
-      render: (value) => <Tag color="purple">{value} 个</Tag>,
-    },
-  ]
-
-  // 详细对比表格
-  const comparisonData = useMemo(() => {
-    // 构建数据集 x 模型的矩阵
-    const matrix = {}
-    const allModels = [...new Set(filteredReports.map(r => r.model))]
-    const allDatasets = [...new Set(filteredReports.map(r => r.dataset))]
-
-    allDatasets.forEach(dataset => {
-      matrix[dataset] = { dataset }
-      allModels.forEach(model => {
-        const report = filteredReports.find(r => r.dataset === dataset && r.model === model)
-        matrix[dataset][model] = report?.summary?.accuracy
       })
     })
 
-    return { data: Object.values(matrix), models: allModels }
-  }, [filteredReports])
-
-  // 对比表格列
-  const comparisonColumns = useMemo(() => {
-    const cols = [
-      {
-        title: '数据集',
-        dataIndex: 'dataset',
-        key: 'dataset',
-        fixed: 'left',
-        width: 150,
-        render: (text) => <Tag color="geekblue">{text}</Tag>,
-      },
-    ]
-
-    comparisonData.models.forEach(model => {
-      cols.push({
-        title: model,
-        dataIndex: model,
-        key: model,
-        render: (value) => {
-          if (value === undefined) return <Text type="secondary">-</Text>
-          const percent = (value * 100).toFixed(2)
-          const className = value >= 0.8 ? 'score-high' : value >= 0.5 ? 'score-medium' : 'score-low'
-          return <span className={className}>{percent}%</span>
-        },
-      })
-    })
-
-    return cols
-  }, [comparisonData])
+    setRadarChartData(chartData)
+    setRadarRendered(true)
+  }
 
   if (loading) {
     return (
@@ -274,106 +170,114 @@ function ResultsPage() {
         结果分析
       </Title>
 
-      {/* 筛选区域 */}
-      <Card bordered={false} className="card-shadow" style={{ marginBottom: 24 }}>
-        <Space size="large" wrap>
-          <div>
-            <Text strong style={{ marginRight: 8 }}>数据集:</Text>
-            <Select
-              mode="multiple"
-              placeholder="选择数据集"
-              value={selectedDatasets}
-              onChange={setSelectedDatasets}
-              style={{ minWidth: 300 }}
-              maxTagCount={3}
-              allowClear
-            >
-              {datasets.map(d => (
-                <Option key={d} value={d}>{d}</Option>
-              ))}
-            </Select>
-          </div>
-          <div>
-            <Text strong style={{ marginRight: 8 }}>模型:</Text>
-            <Select
-              mode="multiple"
-              placeholder="选择模型"
-              value={selectedModels}
-              onChange={setSelectedModels}
-              style={{ minWidth: 300 }}
-              maxTagCount={3}
-              allowClear
-            >
-              {models.map(m => (
-                <Option key={m} value={m}>{m}</Option>
-              ))}
-            </Select>
-          </div>
-        </Space>
-      </Card>
-
-      {filteredReports.length === 0 ? (
-        <Empty description="暂无数据，请调整筛选条件" />
+      {reports.length === 0 ? (
+        <Empty description="暂无数据" />
       ) : (
         <>
-          {/* 模型排行榜 */}
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col xs={24} lg={12}>
-              <Card
-                title={
-                  <span>
-                    <TrophyOutlined style={{ color: '#faad14', marginRight: 8 }} />
-                    模型排行榜
-                  </span>
-                }
-                bordered={false}
-                className="card-shadow"
-              >
-                <Table
-                  columns={modelRankColumns}
-                  dataSource={modelStats}
-                  rowKey="model"
-                  pagination={false}
-                  size="small"
-                />
-              </Card>
-            </Col>
-            <Col xs={24} lg={12}>
-              <Card
-                title={
-                  <span>
-                    <BarChartOutlined style={{ color: '#1890ff', marginRight: 8 }} />
-                    数据集统计
-                  </span>
-                }
-                bordered={false}
-                className="card-shadow"
-              >
-                <Table
-                  columns={datasetRankColumns}
-                  dataSource={datasetStats}
-                  rowKey="dataset"
-                  pagination={false}
-                  size="small"
-                />
-              </Card>
-            </Col>
-          </Row>
+          {/* 雷达图分析 */}
+          <Card bordered={false} className="card-shadow" style={{ marginBottom: 24 }}>
+            <Title level={4} style={{ marginBottom: 16 }}>
+              雷达图分析
+            </Title>
 
-          {/* 详细对比表格 */}
-          <Card
-            title="模型性能对比矩阵"
-            bordered={false}
-            className="card-shadow"
-          >
-            <Table
-              columns={comparisonColumns}
-              dataSource={comparisonData.data}
-              rowKey="dataset"
-              pagination={false}
-              scroll={{ x: 'max-content' }}
-              size="small"
-            />
+            <Space direction="vertical" size="large" style={{ width: '100%' }}>
+              {/* 指标配置 */}
+              <div>
+                <div style={{ marginBottom: 12 }}>
+                  <Text strong>配置指标：</Text>
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={addRadarMetric}
+                    style={{ marginLeft: 8 }}
+                  >
+                    添加指标
+                  </Button>
+                </div>
+                {radarMetrics.map((metric, idx) => (
+                  <div key={idx} style={{ marginBottom: 16, padding: 12, border: '1px solid #f0f0f0', borderRadius: 4 }}>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        placeholder="输入指标名称"
+                        value={metric.name || ''}
+                        onChange={(e) => updateRadarMetricName(idx, e.target.value)}
+                        style={{ flex: 1, padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: 4, minWidth: 200 }}
+                      />
+                      <Button
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        onClick={() => deleteRadarMetric(idx)}
+                      />
+                    </div>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        为此指标选择报告（同一指标下多个报告将取平均值）:
+                      </Text>
+                      <Select
+                        mode="multiple"
+                        placeholder="选择报告"
+                        value={metric.reports}
+                        onChange={(val) => updateRadarMetricReports(idx, val)}
+                        style={{ marginTop: 6, width: '100%' }}
+                      >
+                        {reports.map(r => (
+                          <Option key={r.id} value={r.id}>
+                            {r.dataset} - {r.model}
+                          </Option>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 模型颜色配置（自动提取） */}
+              {availableModelsFromMetrics.length > 0 && (
+                <div>
+                  <Text strong>配置模型颜色（自动提取）:</Text>
+                  <div style={{ marginTop: 8 }}>
+                    {availableModelsFromMetrics.map(model => (
+                      <div key={model} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                        <Text style={{ minWidth: 120 }}>{model}</Text>
+                        <input
+                          type="color"
+                          value={radarModelColors[model] || '#1890ff'}
+                          onChange={(e) => updateModelColor(model, e.target.value)}
+                          style={{ cursor: 'pointer', width: 50, height: 32 }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <Button type="primary" onClick={renderRadar}>
+                渲染雷达图
+              </Button>
+            </Space>
+
+            {radarRendered && radarChartData.length > 0 && (
+              <div style={{ marginTop: 24 }}>
+                <Radar
+                  data={radarChartData}
+                  xField="metric"
+                  yField="value"
+                  seriesField="model"
+                  meta={{
+                    value: {
+                      min: 0,
+                      max: 1,
+                    },
+                  }}
+                  xAxis={{
+                    labelFormatter: (v) => v,
+                  }}
+                  color={(d) => radarModelColors[d.model] || '#1890ff'}
+                />
+              </div>
+            )}
           </Card>
         </>
       )}

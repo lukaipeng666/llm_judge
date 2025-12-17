@@ -1,28 +1,58 @@
 import os
 import json
 import importlib.util
-from typing import Dict, List, Tuple, Callable, Any
+from typing import Dict, List, Tuple, Callable, Any, Optional
 
 
-def load_jsonl(file_path: str) -> List[Dict]:
+def load_jsonl(file_path: str = None, data_id: int = None, user_id: int = None, 
+               database_service_url: str = None) -> List[Dict]:
     """
-    加载JSONL文件
+    加载JSONL数据
     Args:
-        file_path: JSONL文件路径
+        file_path: JSONL文件路径（本地文件模式）
+        data_id: 数据库中的数据ID（数据库模式）
+        user_id: 用户ID（数据库模式必须）
+        database_service_url: 数据库服务URL（数据库模式必须）
     Returns:
         数据列表
     """
     data = []
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    data.append(json.loads(line))
-    except Exception as e:
-        print(f"加载文件失败: {e}")
-        exit(1)
-    return data
+    
+    # 数据库模式：通过HTTP API读取数据
+    if data_id is not None and user_id is not None and database_service_url:
+        try:
+            import httpx
+            with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+                response = client.get(f"/api/user-data/{user_id}/{data_id}")
+                response.raise_for_status()
+                result = response.json()
+                file_content = result.get("file_content", "")
+                
+                # 解析JSONL内容
+                for line in file_content.split("\n"):
+                    line = line.strip()
+                    if line:
+                        data.append(json.loads(line))
+                return data
+        except Exception as e:
+            print(f"从数据库加载数据失败: {e}")
+            exit(1)
+    
+    # 本地文件模式
+    if file_path:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        data.append(json.loads(line))
+        except Exception as e:
+            print(f"加载文件失败: {e}")
+            exit(1)
+        return data
+    
+    print("错误: 必须指定 file_path 或 (data_id + user_id + database_service_url)")
+    exit(1)
 
 
 def load_custom_scoring_module(module_path: str) -> None:

@@ -2,11 +2,8 @@ import time
 import json
 import openai
 import requests
-import traceback
 from typing import List, Dict
 from requests.exceptions import HTTPError, Timeout,ConnectTimeout
-
-is_vllm = True
 
 def call_model_api(
     api_url: str, # 这个参数在使用 openai 包时，通常通过 openai.base_url 设置
@@ -17,6 +14,7 @@ def call_model_api(
     max_tokens: int = 8192,
     retry_times: int = 3,
     timeout: int = 600,
+    is_vllm: bool = False,
 ) -> str:
     if is_vllm:
         result = call_vllm_api(api_url, messages, model, max_tokens=max_tokens)
@@ -132,7 +130,7 @@ def call_vllm_api(
 
 
 def call_openai_api(
-    api_url: str, # 这个参数在使用 openai 包时，通常通过 openai.base_url 设置
+    api_url: str,
     api_key: str,
     messages: List[Dict[str, str]],
     model: str,
@@ -144,41 +142,78 @@ def call_openai_api(
     """
     使用 openai Python 包调用兼容 OpenAI 接口的模型 API。
     """
-    # 1. 配置 openai 客户端
+    # 1. 配置 openai 客户端（timeout 在这里设置）
     client = openai.OpenAI(
         api_key=api_key,
-        base_url=api_url # api_url 通常是 endpoint 的 base_url，例如 https://your-server.com/v1/
+        base_url=api_url,
+        timeout=timeout
     )
 
-    for attempt in range(retry_times + 1):
+    for attempt in range(retry_times):
         try:
             response = client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=timeout
+                max_tokens=max_tokens
             )
             # 提取回复内容
             return response.choices[0].message.content.strip()
 
         except openai.APIConnectionError as e:
             # 网络连接错误
-            print(f"API Connection Error on attempt {attempt + 1}: {e}")
+            print(f"API Connection Error on attempt {attempt + 1}/{retry_times}: {e}")
+            if attempt == retry_times - 1:
+                return f"API Connection Error: {e}"
+            time.sleep(2 ** attempt)
+            
         except openai.RateLimitError as e:
             # 速率限制错误
-            print(f"Rate Limit Error on attempt {attempt + 1}: {e}")
-            # 可能需要等待更长时间
+            print(f"Rate Limit Error on attempt {attempt + 1}/{retry_times}: {e}")
+            if attempt == retry_times - 1:
+                return f"Rate Limit Error: {e}"
             time.sleep(2 ** attempt)
+            
         except openai.APIStatusError as e:
             # 其他 API 错误 (4xx, 5xx)
-            print(f"API Status Error on attempt {attempt + 1}: {e.status_code}, {e.response}")
+            error_details = {
+                "status_code": e.status_code,
+                "response": str(e.response),
+                "model": model,
+                "api_url": api_url,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "messages": messages
+            }
+            
+            # 400 错误通常是参数问题，不需要重试
+            if e.status_code == 400:
+                try:
+                    error_body = e.response.json() if hasattr(e.response, 'json') else str(e.response)
+                except:
+                    error_body = str(e.response)
+                
+                return f"""Bad Request (400) Error:
+Response: {error_body}
+Model: {model}
+API URL: {api_url}
+Temperature: {temperature}
+Max Tokens: {max_tokens}
+Messages: {json.dumps(messages, ensure_ascii=False)}"""
+            
+            if attempt == retry_times - 1:
+                return f"API Status Error ({e.status_code}): {json.dumps(error_details, ensure_ascii=False, indent=2)}"
+            time.sleep(2 ** attempt)
+            
         except Exception as e:
             # 其他未预期的错误
-            print(f"An unexpected error occurred on attempt {attempt + 1}: {e}")
+            error_msg = f"Unexpected error: {type(e).__name__}: {e}"
+            print(f"{error_msg} on attempt {attempt + 1}/{retry_times}")
+            print(f"Model: {model}")
+            print(f"Messages: {messages}")
+            
+            if attempt == retry_times - 1:
+                return error_msg
+            time.sleep(2 ** attempt)
 
-        if attempt < retry_times:
-            print(f"Retrying in {2 ** attempt} seconds...")
-            time.sleep(2 ** attempt) # 指数退避
-
-    raise Exception(f"Failed to get a successful response from the API after {retry_times} retries.")
+    return f"Failed to get response after {retry_times} retries"

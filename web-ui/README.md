@@ -1,152 +1,199 @@
-# LLM Judge Web UI
+# LLM-Judge Web UI
 
-大模型评测系统的 Web 用户界面，提供可视化的评测配置、任务管理和结果展示功能。
+LLM-Judge Web UI 是一个用于大规模语言模型（LLM）评测的可视化管理系统。该系统提供了友好的Web界面，支持评测任务配置、数据管理、任务监控、报告查看等功能。
 
-## 目录结构
+## 🚀 快速开始
 
-```
-web-ui/
-├── backend/                    # 后端 API 服务
-│   ├── app.py                 # FastAPI 主应用
-│   └── requirements.txt       # Python 依赖
-│
-├── frontend/                   # 前端 React 应用
-│   ├── src/
-│   │   ├── layouts/           # 布局组件
-│   │   │   └── MainLayout.jsx # 主布局（侧边栏+头部）
-│   │   │
-│   │   ├── pages/             # 页面组件
-│   │   │   ├── DashboardPage.jsx    # 仪表盘
-│   │   │   ├── EvaluationPage.jsx   # 评测配置
-│   │   │   ├── TasksPage.jsx        # 任务管理
-│   │   │   ├── ReportsPage.jsx      # 报告列表
-│   │   │   ├── ReportDetailPage.jsx # 报告详情
-│   │   │   └── ResultsPage.jsx      # 结果分析
-│   │   │
-│   │   ├── services/          # API 服务层
-│   │   │   └── api.js         # Axios 封装
-│   │   │
-│   │   ├── stores/            # 状态管理
-│   │   │   └── index.js       # Zustand stores
-│   │   │
-│   │   ├── App.jsx            # 路由配置
-│   │   ├── main.jsx           # 应用入口
-│   │   └── index.css          # 全局样式
-│   │
-│   ├── index.html
-│   ├── package.json
-│   └── vite.config.js
-│
-├── start.sh                   # 一键启动脚本
-├── start_backend.sh           # 单独启动后端
-├── start_frontend.sh          # 单独启动前端
-└── README.md                  # 说明文档
-```
+### 环境依赖
 
-## 快速开始
-
-### 前置要求
-
+- Node.js 16+
 - Python 3.8+
-- Node.js 18+
 - npm 或 yarn
 
-### 安装依赖
+### 安装步骤
 
 ```bash
-# 后端依赖
-cd web-ui/backend
-pip install -r requirements.txt
+# 克隆项目
+git clone <repository-url>
+cd llm-judge
 
-# 前端依赖
+# 安装前端依赖
 cd web-ui/frontend
 npm install
+
+# 返回项目根目录
+cd ../..
+
+# 安装Python依赖
+pip install -r requirements.txt
 ```
 
 ### 启动服务
 
-**方式一：一键启动**
+项目提供了多种启动方式：
+
+#### 1. 一键启动所有服务（推荐）
 
 ```bash
+# 在项目根目录下执行
+bash start.sh
+```
+
+这将同时启动：
+- 数据库服务（端口 8081）
+- 后端API服务（端口 8080）
+- 前端开发服务器（端口 5173）
+
+#### 2. 分别启动各组件
+
+```bash
+# 启动数据库服务
 cd web-ui
-chmod +x start.sh
-./start.sh
+bash start_database_only.sh
+
+# 启动后端API服务
+cd web-ui
+bash start_backend_only.sh
+
+# 启动前端开发服务器
+cd web-ui
+bash start_frontend_only.sh
 ```
 
-**方式二：分别启动**
+### 访问界面
+
+启动成功后，可以通过以下地址访问：
+
+- 本机访问: http://localhost:5173
+- 局域网访问: http://<本机IP>:5173
+
+默认管理员账号：
+- 用户名: admin
+- 密码: suanfazu2025
+
+## 🏗️ 项目架构
+
+```
+web-ui/
+├── backend/              # 后端服务
+│   ├── api/              # API接口层
+│   │   ├── app.py        # API主应用
+│   │   ├── auth.py       # 认证模块
+│   │   └── csv_to_jsonl.py  # CSV转换工具
+│   └── database/         # 数据库服务
+│       ├── client/       # 数据库客户端
+│       ├── service/      # 数据库服务端
+│       └── database.py   # 数据库核心逻辑
+├── frontend/             # 前端应用
+│   ├── src/              # 源代码
+│   │   ├── layouts/      # 页面布局
+│   │   ├── pages/        # 页面组件
+│   │   ├── services/     # API服务封装
+│   │   ├── stores/       # 状态管理
+│   │   ├── App.jsx       # 应用根组件
+│   │   └── main.jsx      # 应用入口
+│   ├── package.json      # 前端依赖配置
+│   └── vite.config.js    # 构建配置
+├── config.yaml           # 系统配置文件
+├── start_backend_only.sh # 仅启动后端脚本
+├── start_database_only.sh # 仅启动数据库脚本
+└── start_frontend_only.sh # 仅启动前端脚本
+```
+
+## 🎨 功能特性
+
+### 用户管理
+- 用户注册/登录
+- 管理员权限控制
+- 多用户隔离
+
+### 数据管理
+- 支持JSONL和CSV格式数据上传
+- 数据文件预览和管理
+- 数据集描述和分类
+
+### 评测配置
+- 灵活的API配置（支持多个API地址）
+- 多种模型选择
+- 丰富的评测参数设置
+- 支持多种评分函数
+
+### 任务管理
+- 实时任务状态监控
+- 任务进度跟踪
+- 任务取消和删除
+- 断点续测支持
+
+### 报告查看
+- 评测报告列表展示
+- 详细报告查看
+- 数据可视化分析
+- Badcase分析
+
+### 管理员功能
+- 全局用户管理
+- 全局任务监控
+- 数据文件管理
+
+## ⚙️ 配置说明
+
+系统配置文件位于 `web-ui/config.yaml`：
+
+```yaml
+# 数据库服务配置
+database_service:
+  host: "0.0.0.0"
+  port: 8081
+  database_url: "llm_judge.db"
+
+# Web API服务配置
+web_service:
+  host: "0.0.0.0"
+  port: 8080
+  database_service_url: "http://localhost:8081"
+
+# 前端服务配置
+frontend_service:
+  port: 5173
+  host: "0.0.0.0"
+```
+
+## 🛠️ 开发指南
+
+### 前端开发
 
 ```bash
-# 终端 1 - 启动后端
-cd web-ui/backend
-python app.py
-
-# 终端 2 - 启动前端
+# 进入前端目录
 cd web-ui/frontend
+
+# 启动开发服务器
 npm run dev
+
+# 构建生产版本
+npm run build
 ```
 
-### 访问地址
+### 后端开发
 
-- 前端界面: http://localhost:3000
-- 后端 API: http://localhost:8080
+```bash
+# 启动数据库服务（开发模式）
+cd web-ui/backend
+python3 -m uvicorn database.service.database_service:app --host 0.0.0.0 --port 8081 --reload
 
-## 功能说明
+# 启动API服务（开发模式）
+cd web-ui/backend
+PYTHONPATH="$PWD/../..:$PYTHONPATH" python3 -m uvicorn api.app:app --host 0.0.0.0 --port 8080 --reload
+```
 
-### 1. 仪表盘
-- 显示评测概览统计
-- 最近评测报告列表
-- 任务状态监控
-- 快速操作入口
+### API文档
 
-### 2. 评测配置
-- **基础配置**: API 地址、模型名称、数据文件、评分函数
-- **高级配置**: 线程数、阈值、超时等
-- **断点续测**: 检查点配置
-- **调试选项**: 测试模式
+- 数据库服务文档: http://localhost:8081/docs
+- 后端API文档: http://localhost:8080/docs
 
-### 3. 任务管理
-- 查看所有评测任务
-- 实时进度跟踪
-- 任务取消功能
-- 详细日志查看
+## 📄 许可证
 
-### 4. 历史报告
-- 报告列表浏览
-- 多维度筛选
-- 详细报告查看
-- Badcase 分析
+MIT License
 
-### 5. 结果分析
-- 模型排行榜
-- 数据集统计
-- 性能对比矩阵
+## 🙏 致谢
 
-## API 接口
-
-| 接口 | 方法 | 说明 |
-|------|------|------|
-| `/api/scoring-functions` | GET | 获取评分函数列表 |
-| `/api/data-files` | GET | 获取数据文件列表 |
-| `/api/reports` | GET | 获取报告列表 |
-| `/api/reports/{dataset}/{model}` | GET | 获取报告详情 |
-| `/api/evaluate` | POST | 启动评测任务 |
-| `/api/tasks` | GET | 获取任务列表 |
-| `/api/tasks/{id}` | GET | 获取任务状态 |
-| `/api/tasks/{id}` | DELETE | 取消任务 |
-| `/api/models` | GET | 获取模型列表 |
-| `/api/datasets` | GET | 获取数据集列表 |
-
-## 技术栈
-
-### 后端
-- FastAPI - Web 框架
-- Uvicorn - ASGI 服务器
-- Pydantic - 数据验证
-
-### 前端
-- React 18 - UI 框架
-- Vite - 构建工具
-- Ant Design 5 - UI 组件库
-- React Router 6 - 路由
-- Zustand - 状态管理
-- Axios - HTTP 客户端
+感谢所有为这个项目做出贡献的开发者。

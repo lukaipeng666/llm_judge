@@ -863,6 +863,7 @@ def evaluate_COLDataset(messages: list, model_output: str, reference_output: str
                 if scores["score"] < len(json_match_reference_output):
                     scores["is_badcase"] = 1
                     scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)
+                scores["score"] = scores["score"] / len(json_match_reference_output)
             else:
                 scores["is_badcase"] = 1
                 scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)

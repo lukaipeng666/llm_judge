@@ -1,18 +1,38 @@
 import { create } from 'zustand'
 import * as api from '../services/api'
 
+// Token 管理工具
+const TOKEN_KEY = 'llm_judge_token'
+const USER_KEY = 'llm_judge_user'
+
+const getToken = () => localStorage.getItem(TOKEN_KEY)
+const setToken = (token) => localStorage.setItem(TOKEN_KEY, token)
+const removeToken = () => localStorage.removeItem(TOKEN_KEY)
+
+const getUser = () => {
+  const user = localStorage.getItem(USER_KEY)
+  return user ? JSON.parse(user) : null
+}
+const setUser = (user) => localStorage.setItem(USER_KEY, JSON.stringify(user))
+const removeUser = () => localStorage.removeItem(USER_KEY)
+
 /**
- * 评测配置 Store
+ * 统一的 Store（合并所有功能）
  */
-export const useEvaluationStore = create((set, get) => ({
-  // 状态
-  scoringFunctions: [],
-  dataFiles: [],
-  availableModels: [],
+const useStore = create((set, get) => ({
+  // ==================== 认证状态 ====================
+  token: getToken(),
+  user: getUser(),
+  isAuthenticated: !!getToken(),
+
+  // ==================== 通用状态 ====================
   loading: false,
   error: null,
 
-  // 表单默认值
+  // ==================== 评测配置 ====================
+  scoringFunctions: [],
+  dataFiles: [],
+  availableModels: [],
   formData: {
     api_urls: ['http://localhost:8000/v1'],
     model: '',
@@ -30,11 +50,77 @@ export const useEvaluationStore = create((set, get) => ({
     resume: false,
     role: 'assistant',
     timeout: 600,
-    max_tokens: 16384,
+    max_tokens: 8000,
     api_key: 'sk-xxx',
+    is_vllm: false,
   },
 
-  // Actions
+  // ==================== 任务管理 ====================
+  tasks: [],
+  currentTask: null,
+
+  // ==================== 报告管理 ====================
+  reports: [],
+  currentReport: null,
+
+  // ==================== 用户数据管理 ====================
+  userDataFiles: [],
+  currentDataDetail: null,
+  dataDetailLoading: false,
+
+  // ==================== Actions: 认证 ====================
+  
+  login: async (username, password) => {
+    try {
+      set({ loading: true, error: null })
+      const res = await api.login(username, password)
+      setToken(res.access_token)
+      setUser(res.user)
+      set({ 
+        token: res.access_token, 
+        user: res.user, 
+        isAuthenticated: true,
+        loading: false 
+      })
+    } catch (err) {
+      set({ error: err.message, loading: false })
+      throw err
+    }
+  },
+
+  register: async (username, password, email) => {
+    try {
+      set({ loading: true, error: null })
+      const res = await api.register(username, password, email)
+      setToken(res.access_token)
+      setUser(res.user)
+      set({ 
+        token: res.access_token, 
+        user: res.user, 
+        isAuthenticated: true,
+        loading: false 
+      })
+    } catch (err) {
+      set({ error: err.message, loading: false })
+      throw err
+    }
+  },
+
+  logout: () => {
+    removeToken()
+    removeUser()
+    set({ 
+      token: null, 
+      user: null, 
+      isAuthenticated: false,
+      tasks: [],
+      reports: [],
+      userDataFiles: [],
+      currentDataDetail: null
+    })
+  },
+
+  // ==================== Actions: 评测配置 ====================
   setFormData: (data) => set((state) => ({
     formData: { ...state.formData, ...data }
   })),
@@ -57,8 +143,9 @@ export const useEvaluationStore = create((set, get) => ({
       resume: false,
       role: 'assistant',
       timeout: 600,
-      max_tokens: 16384,
+      max_tokens: 8000,
       api_key: 'sk-xxx',
+      is_vllm: false,
     }
   })),
 
@@ -66,7 +153,7 @@ export const useEvaluationStore = create((set, get) => ({
     try {
       set({ loading: true })
       const res = await api.getScoringFunctions()
-      set({ scoringFunctions: res.scoring_functions, loading: false })
+      set({ scoringFunctions: res.scoring_functions, loading: false, error: null })
     } catch (err) {
       set({ error: err.message, loading: false })
     }
@@ -76,7 +163,7 @@ export const useEvaluationStore = create((set, get) => ({
     try {
       set({ loading: true })
       const res = await api.getDataFiles()
-      set({ dataFiles: res.data_files, loading: false })
+      set({ dataFiles: res.data_files, loading: false, error: null })
     } catch (err) {
       set({ error: err.message, loading: false })
     }
@@ -90,23 +177,83 @@ export const useEvaluationStore = create((set, get) => ({
       set({ error: err.message })
     }
   },
-}))
 
-/**
- * 任务管理 Store
- */
-export const useTaskStore = create((set, get) => ({
-  tasks: [],
-  currentTask: null,
-  loading: false,
-  error: null,
-
-  fetchTasks: async () => {
+  // ==================== Actions: 用户数据管理 ====================
+  
+  fetchUserDataFiles: async () => {
     try {
       set({ loading: true })
+      const res = await api.getUserDataFiles()
+      console.log('[DEBUG] fetchUserDataFiles response:', res)
+      set({ userDataFiles: res.data_files, loading: false, error: null })
+    } catch (err) {
+      console.error('[ERROR] fetchUserDataFiles failed:', err.message)
+      set({ error: err.message, loading: false })
+    }
+  },
+
+  uploadUserDataFile: async (file, description) => {
+    try {
+      await api.uploadUserDataFile(file, description)
+      // 重新加载数据文件列表
+      await get().fetchUserDataFiles()
+      // 同时更新评测配置中的数据文件列表
+      await get().fetchDataFiles()
+    } catch (err) {
+      throw err
+    }
+  },
+
+  updateUserDataFile: async (id, description) => {
+    try {
+      await api.updateUserDataFile(id, description)
+      await get().fetchUserDataFiles()
+    } catch (err) {
+      throw err
+    }
+  },
+
+  deleteUserDataFile: async (id) => {
+    try {
+      await api.deleteUserDataFile(id)
+      await get().fetchUserDataFiles()
+      await get().fetchDataFiles()
+    } catch (err) {
+      throw err
+    }
+  },
+
+  fetchDataContent: async (dataId) => {
+    try {
+      set({ dataDetailLoading: true })
+      const res = await api.getUserDataContent(dataId)
+      set({ currentDataDetail: res, dataDetailLoading: false })
+      return res
+    } catch (err) {
+      set({ error: err.message, dataDetailLoading: false })
+      throw err
+    }
+  },
+
+  clearDataDetail: () => set({ currentDataDetail: null }),
+
+  // ==================== Actions: 任务管理 ====================
+  
+  fetchTasks: async (silent = false) => {
+    try {
+      if (!silent) {
+        set({ loading: true })
+      }
       const res = await api.getAllTasks()
+      console.log('[TaskStore] Fetched tasks:', res.tasks.length, 'tasks', silent ? '(silent)' : '')
+      res.tasks.forEach(task => {
+        if (task.status === 'running') {
+          console.log(`[TaskStore] Task ${task.task_id}: ${task.progress}% - ${task.message}`)
+        }
+      })
       set({ tasks: res.tasks, loading: false })
     } catch (err) {
+      console.error('[TaskStore] Fetch tasks error:', err)
       set({ error: err.message, loading: false })
     }
   },
@@ -143,17 +290,29 @@ export const useTaskStore = create((set, get) => ({
       throw err
     }
   },
-}))
 
-/**
- * 报告 Store
- */
-export const useReportStore = create((set, get) => ({
-  reports: [],
-  currentReport: null,
-  loading: false,
-  error: null,
+  deleteTask: async (taskId) => {
+    try {
+      await api.cancelTask(taskId)
+      get().fetchTasks()
+    } catch (err) {
+      set({ error: err.message })
+      throw err
+    }
+  },
 
+  updateTask: async (taskId, updates) => {
+    try {
+      await api.updateTask(taskId, updates)
+      get().fetchTasks()
+    } catch (err) {
+      set({ error: err.message })
+      throw err
+    }
+  },
+
+  // ==================== Actions: 报告管理 ====================
+  
   fetchReports: async () => {
     try {
       set({ loading: true })
@@ -175,4 +334,17 @@ export const useReportStore = create((set, get) => ({
       throw err
     }
   },
+
+  deleteReport: async (reportId) => {
+    try {
+      await api.deleteReport(reportId)
+      // 删除后重新加载报告列表
+      await get().fetchReports()
+    } catch (err) {
+      set({ error: err.message })
+      throw err
+    }
+  },
 }))
+
+export default useStore

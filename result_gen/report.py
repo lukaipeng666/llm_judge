@@ -2,10 +2,13 @@ import os
 import json
 import time
 import argparse
-from typing import Dict, List, Any
+import httpx
+from typing import Dict, List, Any, Optional
 
 def generate_report(summary: Dict[str, Any], results: List[Dict], badcases: List[Dict], 
-                   report_dir: str, report_formats: List[str], args: argparse.Namespace):
+                   report_dir: str, report_formats: List[str], args: argparse.Namespace,
+                   user_id: Optional[int] = None, task_id: Optional[str] = None,
+                   database_service_url: Optional[str] = None):
     """
     生成评估报告
     Args:
@@ -15,102 +18,57 @@ def generate_report(summary: Dict[str, Any], results: List[Dict], badcases: List
         report_dir: 报告输出目录
         report_formats: 报告格式列表
         args: 命令行参数
+        user_id: 用户ID（output_json模式下必须）
+        task_id: 任务ID（output_json模式下必须）
+        database_service_url: 数据库服务URL（output_json模式下必须）
     """
-    # 确保报告目录存在
-    os.makedirs(report_dir, exist_ok=True)
-    
-    # 生成报告文件名（基于时间戳）
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    base_filename = f"evaluation_report_{timestamp}"
-    
-    # 准备报告数据
-    summary["badcase_count"] = len(badcases)
-    report_data = {
-        'timestamp': timestamp,
-        'config': vars(args),
-        'summary': summary,
-        'badcases': badcases,
-    }
-    
-    # 生成JSON格式报告
-    if 'json' in report_formats:
-        json_report_path = os.path.join(report_dir, f"{base_filename}.json")
-        with open(json_report_path, 'w', encoding='utf-8') as f:
-            json.dump(report_data, f, ensure_ascii=False, indent=2)
-        print(f"JSON报告已保存: {json_report_path}")
-    
-    # 生成文本格式报告
-    if 'txt' in report_formats:
-        txt_report_path = os.path.join(report_dir, f"{base_filename}.txt")
-        with open(txt_report_path, 'w', encoding='utf-8') as f:
-            # 写入报告头部
-            f.write("="*80 + "\n")
-            f.write("大模型评估报告\n")
-            f.write("="*80 + "\n\n")
+    try:
+        # 准备报告数据
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        summary["badcase_count"] = len(badcases)
+        
+        # 过滤敏感路径信息，避免安全风险
+        safe_config = {}
+        sensitive_keys = {'report_dir', 'checkpoint_path', 'scoring_module', 'database_service_url'}
+        for k, v in vars(args).items():
+            if k not in sensitive_keys:
+                safe_config[k] = v
+        
+        report_data = {
+            'timestamp': timestamp,
+            'config': safe_config,
+            'summary': summary,
+            'badcases': badcases,
+        }
+        
+        # 通过HTTP API保存报告
+        if user_id and task_id and database_service_url:
+            client = httpx.Client(base_url=database_service_url, timeout=30.0)
+            # 使用data_filename（已在main.py中设置），如果没有则使用data_file
+            dataset_name = getattr(args, 'data_filename', None)
+            if not dataset_name:
+                data_file_path = getattr(args, 'data_file', 'unknown')
+                dataset_name = os.path.basename(data_file_path) if data_file_path and data_file_path != 'unknown' else 'unknown'
             
-            # 写入配置信息
-            f.write("配置信息:\n")
-            f.write(f"  评估时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"  数据文件: {args.data_file}\n")
-            f.write(f"  评分函数: {args.scoring}\n")
-            f.write(f"  API地址: {args.api_url}\n")
-            f.write(f"  Badcase阈值: {args.badcase_threshold}\n\n")
-            
-            # 写入汇总统计
-            f.write("汇总统计:\n")
-            f.write(f"  总数据量: {summary.get('total_count', 0)}\n")
-            f.write(f"  正确数量: {summary.get('correct_count', 0)}\n")
-            f.write(f"  准确率: {summary.get('accuracy', 0):.4f}\n")
-            f.write(f"  平均分: {summary.get('average_score', 0):.4f}\n")
-            f.write(f"  平均推理时间: {summary.get('average_inference_time', 0):.4f}秒\n")
-            f.write(f"  Badcase数量: {len(badcases)}\n\n")
-            
-            # 写入ROUGE分数
-            if summary.get('rouge_scores'):
-                f.write("ROUGE分数:\n")
-                for key, value in summary['rouge_scores'].items():
-                    f.write(f"  {key}: {value:.4f}\n")
-                f.write("\n")
-            
-            # 写入Badcase详情
-            f.write("Badcase详情:\n")
-            f.write("-"*80 + "\n")
-            
-            if badcases:
-                for i, badcase in enumerate(badcases, 1):
-                    f.write(f"Badcase #{i}:\n")
-                    f.write(f"  索引: {badcase.get('index', 'N/A')}\n")
-                    if 'user_input' in badcase and badcase['user_input']:
-                        f.write(f"  用户输入: {badcase['user_input'][:100]}{'...' if len(badcase['user_input']) > 100 else ''}\n")
-                    if 'model_output' in badcase:
-                        f.write(f"  模型输出: {badcase['model_output']}\n")
-                    if 'reference_output' in badcase:
-                        f.write(f"  参考答案: {badcase['reference_output']}\n")
-                    if 'score' in badcase:
-                        f.write(f"  得分: {badcase['score']}\n")
-                    if 'error' in badcase:
-                        f.write(f"  错误信息: {badcase['error']}\n")
-                    if 'details' in badcase:
-                        f.write(f"  详情: {badcase['details']}\n")
-                    f.write("-"*80 + "\n")
-            else:
-                f.write("  无Badcase\n")
-        print(f"文本报告已保存: {txt_report_path}")
-    
-    # 生成单独的Badcase详情文件
-    if badcases and 'badcase' in report_formats:
-        badcase_path = os.path.join(report_dir, f"badcases_{timestamp}.json")
-        badcase_data = [{
-            'index': bc.get('index'),
-            'user_input': bc.get('user_input'),
-            'model_output': bc.get('model_output'),
-            'reference_output': bc.get('reference_output'),
-            'score': bc.get('score'),
-            'details': bc.get('details')
-        } for bc in badcases]
-        with open(badcase_path, 'w', encoding='utf-8') as f:
-            json.dump(badcase_data, f, ensure_ascii=False, indent=2)
-        print(f"Badcase详情已保存: {badcase_path}")
+            response = client.post("/api/user-reports", json={
+                "user_id": user_id,
+                "task_id": task_id,
+                "dataset": dataset_name,
+                "model": getattr(args, 'model', 'unknown'),
+                "report_content": json.dumps(report_data, ensure_ascii=False),
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "summary": summary
+            })
+            response.raise_for_status()
+            client.close()
+            print(f"[INFO] 报告已保存到数据库，Report ID: {response.json().get('report_id')}")
+        else:
+            print("[WARNING] output_json模式但缺少user_id、task_id或database_service_url，无法保存到数据库")
+    except Exception as e:
+        print(f"[ERROR] 保存报告到数据库失败: {e}")
+        import traceback
+        traceback.print_exc()
+    return
 
 
 def aggregate_results(results: List[Dict]) -> Dict[str, Any]:

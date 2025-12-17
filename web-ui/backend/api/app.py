@@ -1,0 +1,819 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+LLM Judge Web UI - 后端 API 服务
+基于 FastAPI 构建，提供评测任务管理和结果查询接口
+"""
+
+import os
+import sys
+import json
+import asyncio
+import subprocess
+import threading
+import shutil
+from collections import deque
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Dict, Any
+from urllib.parse import unquote
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import uvicorn
+import yaml
+
+# 导入认证和数据库模块
+from .auth import UserRegister, UserLogin, Token, create_access_token, get_current_user
+
+# 处理数据库客户端的导入
+from pathlib import Path
+import sys
+DB_CLIENT_PATH = Path(__file__).parent.parent / "database" / "client"
+if str(DB_CLIENT_PATH) not in sys.path:
+    sys.path.insert(0, str(DB_CLIENT_PATH))
+import database_client as db
+
+# 添加项目根目录到 Python 路径
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from function_register.plugin import SCORING_FUNCTIONS_plugin, initialize_langdetect_profiles
+
+# 初始化 FastAPI 应用
+app = FastAPI(
+    title="LLM Judge Web UI API",
+    description="大模型评测系统 Web 接口",
+    version="1.0.0"
+)
+
+# 配置 CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 添加自定义异常处理器
+from fastapi.exceptions import RequestValidationError
+from starlette.responses import JSONResponse
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """处理 Pydantic 验证错误，返回更详细的信息"""
+    print(f"[ERROR] Validation error: {exc}")
+    errors = []
+    for error in exc.errors():
+        errors.append({
+            "field": " -> ".join(str(x) for x in error["loc"]),
+            "message": error["msg"],
+            "type": error["type"]
+        })
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Validation error",
+            "errors": errors
+        }
+    )
+
+
+# 存储运行中的进程对象（仅用于取消任务）
+# 使用弱引用避免内存泄漏，并添加自动清理机制
+running_processes: Dict[str, subprocess.Popen] = {}
+processes_lock = threading.Lock()
+
+def cleanup_finished_processes():
+    """清理已结束的进程，防止内存泄漏"""
+    with processes_lock:
+        finished_tasks = []
+        for task_id, process in running_processes.items():
+            if process.poll() is not None:  # 进程已结束
+                finished_tasks.append(task_id)
+        for task_id in finished_tasks:
+            del running_processes[task_id]
+        if finished_tasks:
+            print(f"[INFO] 自动清理 {len(finished_tasks)} 个已结束的进程")
+        return len(finished_tasks)
+
+# ==================== 数据模型 ====================
+
+class EvaluationConfig(BaseModel):
+    """评测配置模型"""
+    api_urls: List[str] = ["http://localhost:8000/v1"]
+    model: str = "Qwen/Qwen-1.8B-Chat"
+    data_file: str = ""  # 改为 data_id
+    scoring: str = "rouge"
+    scoring_module: str = "./function_register/plugin.py"
+    max_workers: int = 4
+    badcase_threshold: float = 0.5
+    report_format: str = "json, txt, badcases"
+    test_mode: bool = False
+    sample_size: int = 0
+    checkpoint_path: Optional[str] = None
+    checkpoint_interval: int = 32
+    resume: bool = False
+    role: str = "assistant"
+    timeout: int = 600
+    max_tokens: int = 8000
+    api_key: str = "sk-xxx"
+    is_vllm: bool = False
+
+
+class TaskStatus(BaseModel):
+    """任务状态模型"""
+    task_id: str
+    status: str  # pending, running, completed, failed
+    progress: float = 0.0
+    message: str = ""
+    config: Optional[Dict] = None
+    result: Optional[Dict] = None
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class ReportSummary(BaseModel):
+    """报告摘要模型"""
+    dataset: str
+    model: str
+    report_path: str
+    timestamp: str
+    summary: Dict
+
+
+# ==================== API 接口 ====================
+
+@app.on_event("startup")
+async def startup_event():
+    """服务启动时的初始化任务"""
+    import asyncio
+    
+    async def periodic_cleanup():
+        """定期清理已结束的进程"""
+        while True:
+            await asyncio.sleep(60)  # 每60秒清理一次
+            cleanup_finished_processes()
+    
+    # 启动后台清理任务
+    asyncio.create_task(periodic_cleanup())
+    print("[INFO] 进程自动清理任务已启动（每60秒执行一次）")
+
+
+@app.get("/")
+async def root():
+    """根路径 - API 健康检查"""
+    # 顺便触发一次进程清理
+    cleanup_finished_processes()
+    return {
+        "status": "ok",
+        "message": "LLM Judge Web UI API is running",
+        "version": "2.0.0",
+        "features": ["multi-user", "authentication", "data-management"],
+        "active_processes": len(running_processes)
+    }
+
+
+# ==================== 用户认证接口 ====================
+
+@app.post("/api/auth/register", response_model=Token)
+async def register(user: UserRegister):
+    """用户注册"""
+    # 创建用户
+    user_id = db.create_user(user.username, user.password, user.email)
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Username already exists")
+    
+    # 生成token
+    access_token = create_access_token(data={"user_id": user_id, "username": user.username})
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user_id,
+            "username": user.username,
+            "email": user.email
+        }
+    }
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(credentials: UserLogin):
+    """用户登录"""
+    user = db.verify_user(credentials.username, credentials.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    
+    # 生成token
+    access_token = create_access_token(data={"user_id": user["id"], "username": user["username"]})
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user
+    }
+
+
+@app.get("/api/auth/me")
+async def get_current_user_info(current_user: Dict = Depends(get_current_user)):
+    """获取当前登录用户信息"""
+    user = db.get_user_by_id(current_user["user_id"])
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+def get_current_admin_user(current_user: Dict = Depends(get_current_user)):
+    """验证当前用户是否为管理员"""
+    if current_user["username"] != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+
+@app.get("/api/scoring-functions")
+async def get_scoring_functions():
+    """获取所有可用的评分函数列表"""
+    initialize_langdetect_profiles()
+    return {
+        "scoring_functions": list(SCORING_FUNCTIONS_plugin.keys())
+    }
+
+
+# ==================== 用户数据管理接口 ====================
+
+@app.get("/api/user/data")
+async def get_user_data_files(current_user: Dict = Depends(get_current_user)):
+    """获取当前用户的数据文件列表"""
+    try:
+        data_list = db.get_user_data_list(current_user["user_id"])
+        print(f"[DEBUG] User {current_user['user_id']} data_list: {len(data_list)} files")
+        return {"data_files": data_list}
+    except Exception as e:
+        print(f"[ERROR] Failed to get user data list: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve data files: {str(e)}")
+
+
+@app.get("/api/user/data/{data_id}/content")
+async def get_user_data_content(data_id: int, current_user: Dict = Depends(get_current_user)):
+    """获取用户数据文件的内容（JSONL格式，每行解析为JSON对象）"""
+    try:
+        # 获取数据信息
+        user_data = db.get_user_data_by_id(current_user["user_id"], data_id)
+        if not user_data:
+            raise HTTPException(status_code=404, detail="Data file not found or access denied")
+        
+        # 解析JSONL内容
+        file_content = user_data.get("file_content", "")
+        lines = file_content.strip().split('\n')
+        
+        jsonl_data = []
+        for i, line in enumerate(lines):
+            if line.strip():
+                try:
+                    jsonl_data.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    # 返回解析错误信息
+                    return {
+                        "filename": user_data["filename"],
+                        "description": user_data.get("description", ""),
+                        "total_count": len([l for l in lines if l.strip()]),
+                        "data": jsonl_data,
+                        "error": f"Failed to parse line {i + 1}: {str(e)}"
+                    }
+        
+        return {
+            "filename": user_data["filename"],
+            "description": user_data.get("description", ""),
+            "total_count": len(jsonl_data),
+            "data": jsonl_data,
+            "error": None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/user/data/validate-csv")
+async def validate_csv_file(file: UploadFile = File(...), 
+                           current_user: Dict = Depends(get_current_user)):
+    """验证CSV文件并转换为JSONL格式（不保存文件）"""
+    try:
+        # 延迟导入
+        from .csv_to_jsonl import convert_csv_to_jsonl_in_memory
+        
+        # 验证文件类型
+        if not file.filename.endswith(".csv"):
+            raise HTTPException(status_code=400, detail="Only .csv files are supported")
+        
+        # 读取文件内容
+        content = await file.read()
+        csv_content = content.decode('utf-8-sig')
+        
+        # 转换CSV并获取验证信息
+        jsonl_data, validation_info = convert_csv_to_jsonl_in_memory(csv_content)
+        
+        # 如果有错误，返回详细错误信息
+        if validation_info["errors"]:
+            return {
+                "success": False,
+                "message": "CSV文件验证失败",
+                "validation": validation_info,
+                "preview_data": []
+            }
+        
+        # 成功转换，返回预览数据和统计信息
+        preview_data = jsonl_data[:5]  # 只返回前5条作为预览
+        return {
+            "success": True,
+            "message": "CSV文件验证成功",
+            "validation": {
+                "total_rows": validation_info["total_rows"],
+                "valid_rows": validation_info["valid_rows"],
+                "empty_rows": validation_info["empty_rows"],
+                "headers_info": validation_info["headers_info"],
+                "warnings": validation_info["warnings"],
+                "invalid_rows": validation_info["invalid_rows"]
+            },
+            "preview_data": preview_data
+        }
+    except Exception as e:
+        import traceback
+        error_detail = f"Validation error: {str(e)}\n{traceback.format_exc()}"
+        print(f"[ERROR] CSV validation failed: {error_detail}")
+        raise HTTPException(status_code=500, detail=error_detail)
+
+@app.post("/api/user/data")
+async def upload_user_data(file: UploadFile = File(...), description: str = "", 
+                           current_user: Dict = Depends(get_current_user)):
+    """上传用户数据文件（支持JSONL和CSV）"""
+    try:
+        file_content = ""
+        
+        if file.filename.endswith(".jsonl"):
+            # JSONL文件直接上传
+            content = await file.read()
+            file_content = content.decode('utf-8')
+            
+            # 验证是否是有效的JSONL格式
+            lines = file_content.strip().split('\n')
+            for line in lines:
+                if line.strip():
+                    json.loads(line)  # 验证每行是JSON
+        
+        elif file.filename.endswith(".csv"):
+            # 延迟导入CSV转换模块
+            from .csv_to_jsonl import convert_csv_to_jsonl_in_memory
+            
+            # CSV文件需要先转换为JSONL
+            csv_content = (await file.read()).decode('utf-8-sig')
+            
+            # 转换CSV并验证
+            jsonl_data, validation_info = convert_csv_to_jsonl_in_memory(csv_content)
+            
+            # 检查转换是否成功
+            if validation_info["errors"]:
+                error_msg = "CSV转换失败: " + "; ".join(validation_info["errors"])
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            # 转换成功，生成JSONL内容
+            file_content = "\n".join(
+                json.dumps(obj, ensure_ascii=False) for obj in jsonl_data
+            )
+            # 更新filename为jsonl后缀
+            original_filename = file.filename
+            file.filename = original_filename.replace(".csv", ".jsonl")
+        
+        else:
+            raise HTTPException(status_code=400, detail="Only .jsonl and .csv files are supported")
+        
+        # 创建数据库记录
+        data_id = db.create_user_data(
+            user_id=current_user["user_id"],
+            filename=file.filename,
+            file_content=file_content,
+            description=description
+        )
+        
+        return {
+            "id": data_id,
+            "filename": file.filename,
+            "size": len(file_content.encode('utf-8')),
+            "description": description,
+            "message": "File uploaded successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSONL format")
+    except Exception as e:
+        import traceback
+        error_detail = f"Upload error: {str(e)}\n{traceback.format_exc()}"
+        print(f"[ERROR] Upload failed: {error_detail}")
+        raise HTTPException(status_code=500, detail=error_detail)
+
+
+@app.put("/api/user/data/{data_id}")
+async def update_user_data_info(data_id: int, description: str, 
+                                 current_user: Dict = Depends(get_current_user)):
+    """更新用户数据文件描述"""
+    success = db.update_user_data(current_user["user_id"], data_id, description)
+    if not success:
+        raise HTTPException(status_code=404, detail="Data file not found or access denied")
+    return {"message": "Data file updated successfully"}
+
+
+@app.delete("/api/user/data/{data_id}")
+async def delete_user_data_file(data_id: int, current_user: Dict = Depends(get_current_user)):
+    """删除用户数据文件"""
+    # 删除数据库记录
+    success = db.delete_user_data(current_user["user_id"], data_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Data file not found or access denied")
+    
+    return {"message": "Data file deleted successfully"}
+
+
+@app.get("/api/data-files")
+async def get_data_files(current_user: Dict = Depends(get_current_user)):
+    """获取当前用户的数据文件列表（仅用户上传的文件）"""
+    files = []
+    
+    # 用户上传的数据文件（从数据库获取）
+    user_data_list = db.get_user_data_list(current_user["user_id"])
+    for data in user_data_list:
+        files.append({
+            "id": data["id"],
+            "name": data["filename"],
+            "size": data.get("file_size", 0),
+            "type": "user",
+            "description": data.get("description", "")
+        })
+    
+    return {"data_files": files}
+
+
+@app.get("/api/reports")
+async def get_reports(current_user: Dict = Depends(get_current_user)):
+    """获取当前用户的评测报告列表"""
+    reports = db.get_user_reports(current_user["user_id"])
+    return {"reports": reports}
+
+
+@app.get("/api/reports/{dataset}/{model}")
+async def get_report_detail(dataset: str, model: str, current_user: Dict = Depends(get_current_user)):
+    """获取指定报告的详细信息"""
+    try:
+        # URL 解码参数
+        dataset = unquote(dataset)
+        model = unquote(model)
+        
+        # 从数据库获取报告
+        report = db.get_user_report_by_path(current_user["user_id"], dataset, model)
+        if not report:
+            raise HTTPException(status_code=404, detail="Report not found or access denied")
+        
+        # 返回报告内容
+        return report["report_content"]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/reports/{report_id}")
+async def delete_report(report_id: int, current_user: Dict = Depends(get_current_user)):
+    """删除报告"""
+    success = db.delete_user_report(current_user["user_id"], report_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Report not found or access denied")
+    return {"message": "Report deleted successfully"}
+
+
+@app.post("/api/evaluate")
+async def start_evaluation(config: EvaluationConfig, background_tasks: BackgroundTasks, 
+                           current_user: Dict = Depends(get_current_user)):
+    """启动评测任务"""
+    try:
+        task_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 验证数据文件存在
+        data_filename = ""
+        
+        if config.data_file:
+            # 用户文件，验证数据存在
+            try:
+                data_id = int(config.data_file)
+                user_data = db.get_user_data_by_id(current_user["user_id"], data_id)
+                if not user_data:
+                    raise HTTPException(status_code=404, detail="Data file not found")
+                data_filename = user_data["filename"]
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid data file ID")
+        else:
+            raise HTTPException(status_code=400, detail="Data file is required")
+        
+        # 构建命令行参数（不再需要临时文件和临时报告目录）
+        # 读取配置文件获取数据库服务URL
+        config_path = Path(__file__).parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        cmd = [
+            sys.executable, str(PROJECT_ROOT / "main.py"),
+            "--api_urls", *config.api_urls,
+            "--model", config.model,
+            "--data_id", str(data_id),
+            "--scoring", config.scoring,
+            "--scoring_module", config.scoring_module,
+            "--max_workers", str(config.max_workers),
+            "--badcase_threshold", str(config.badcase_threshold),
+            "--report_format", config.report_format,
+            "--role", config.role,
+            "--timeout", str(config.timeout),
+            "--max-tokens", str(config.max_tokens),
+            "--api_key", config.api_key,
+            "--output_json",
+            "--user_id", str(current_user["user_id"]),
+            "--task_id", task_id,
+            "--database_service_url", database_service_url,
+            "--is_vllm", str(config.is_vllm),
+        ]
+        
+        if config.test_mode:
+            cmd.append("--test-mode")
+        
+        if config.sample_size > 0:
+            cmd.extend(["--sample-size", str(config.sample_size)])
+        
+        if config.checkpoint_path:
+            cmd.extend(["--checkpoint_path", config.checkpoint_path])
+            cmd.extend(["--checkpoint_interval", str(config.checkpoint_interval)])
+        
+        if config.resume:
+            cmd.append("--resume")
+        
+        # 创建数据库任务记录
+        db.create_user_task(
+            user_id=current_user["user_id"],
+            task_id=task_id,
+            config=config.dict()
+        )
+        
+        # 在后台运行任务
+        background_tasks.add_task(
+            run_evaluation_task, 
+            task_id, 
+            cmd, 
+            current_user["user_id"],
+            data_filename
+        )
+        
+        return {
+            "task_id": task_id,
+            "status": "pending",
+            "message": "Evaluation task created"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def run_evaluation_task(task_id: str, cmd: List[str], user_id: int, data_filename: str):
+    """在后台运行评测任务（同步函数，由 BackgroundTasks 在线程池中执行）"""
+    import re
+    
+    def update_task(updates: dict):
+        """更新任务状态（仅SQL数据库）"""
+        db.update_user_task(task_id, updates)
+    
+    try:
+        update_task({"status": "running", "message": "Evaluation in progress..."})
+        
+        # 使用 subprocess 运行任务
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=str(PROJECT_ROOT),
+            text=True,
+            bufsize=1,  # 行缓冲，确保实时输出
+            universal_newlines=True
+        )
+        
+        # 保存进程对象以便取消
+        with processes_lock:
+            running_processes[task_id] = process
+        
+        # 读取输出并实时更新进度
+        # 使用 deque 限制大小，自动丢弃旧元素，避免内存无限增长
+
+        process.wait()
+        
+        # 清理进程对象
+        with processes_lock:
+            if task_id in running_processes:
+                del running_processes[task_id]
+        
+        if process.returncode == 0:
+            # 任务成功，报告已由main.py通过generate_report保存到数据库
+            # 不再重复保存，避免生成重复报告
+
+            update_task({
+                "status": "completed",
+                "progress": 100.0,
+                "message": "Evaluation completed successfully",
+            })
+        else:
+            update_task({
+                "status": "failed",
+                "message": f"Evaluation failed with return code {process.returncode}",
+            })
+        
+    except Exception as e:
+        update_task({"status": "failed", "message": str(e)})
+        # 清理进程对象
+        with processes_lock:
+            if task_id in running_processes:
+                del running_processes[task_id]
+
+
+@app.get("/api/tasks/{task_id}")
+async def get_task_status(task_id: str, current_user: Dict = Depends(get_current_user)):
+    """获取任务状态"""
+    # 直接从数据库查询
+    task = db.get_user_task_by_id(current_user["user_id"], task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found or access denied")
+    return task
+
+
+@app.get("/api/tasks")
+async def get_all_tasks(current_user: Dict = Depends(get_current_user)):
+    """获取当前用户的所有任务列表"""
+    # 直接从数据库获取所有任务
+    tasks = db.get_user_tasks(current_user["user_id"])
+    return {"tasks": tasks}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_or_cancel_task(task_id: str, current_user: Dict = Depends(get_current_user)):
+    """删除或取消任务"""
+    # 验证任务存在且属于当前用户
+    task = db.get_user_task_by_id(current_user["user_id"], task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found or access denied")
+    
+    # 如果任务正在运行，先终止进程
+    with processes_lock:
+        if task_id in running_processes:
+            process = running_processes[task_id]
+            if process.poll() is None:  # 进程还在运行
+                process.terminate()
+                # 更新状态为取消
+                db.update_user_task(task_id, {
+                    "status": "cancelled",
+                    "message": "Task cancelled by user"
+                })
+            del running_processes[task_id]
+    
+    # 删除任务记录
+    success = db.delete_user_task(current_user["user_id"], task_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete task")
+    
+    return {"message": "Task deleted successfully"}
+
+
+@app.put("/api/tasks/{task_id}")
+async def update_task_info(task_id: str, updates: Dict[str, Any], current_user: Dict = Depends(get_current_user)):
+    """编辑任务信息（仅允许修改 message 字段）"""
+    # 验证任务存在且属于当前用户
+    task = db.get_user_task_by_id(current_user["user_id"], task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found or access denied")
+    
+    # 只允许编辑 message 字段
+    allowed_fields = {"message"}
+    filtered_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+    
+    if not filtered_updates:
+        raise HTTPException(status_code=400, detail="No valid fields to update")
+    
+    # 更新任务
+    success = db.update_user_task(task_id, filtered_updates)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update task")
+    
+    return {"message": "Task updated successfully"}
+
+
+# ==================== 管理员接口 ====================
+
+@app.get("/api/admin/users")
+async def admin_get_users(current_user: Dict = Depends(get_current_admin_user)):
+    """管理员获取所有用户"""
+    users = db.get_all_users()
+    return {"users": users}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: int, current_user: Dict = Depends(get_current_admin_user)):
+    """管理员删除用户"""
+    if user_id == current_user["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot delete self")
+    
+    success = db.delete_user(user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # 清理该用户正在运行的进程
+    # 注意：这里可能需要从数据库查询该用户所有正在运行的任务ID
+    # 简单起见，后续迭代再优化，目前依赖定期清理或用户任务状态更新
+    
+    return {"message": "User deleted successfully"}
+
+
+@app.get("/api/admin/tasks")
+async def admin_get_all_tasks(current_user: Dict = Depends(get_current_admin_user)):
+    """管理员获取所有任务"""
+    tasks = db.get_all_tasks_global()
+    return {"tasks": tasks}
+
+
+@app.post("/api/admin/tasks/{task_id}/terminate")
+async def admin_terminate_task(task_id: str, current_user: Dict = Depends(get_current_admin_user)):
+    """管理员终止任务"""
+    # 尝试终止进程
+    with processes_lock:
+        if task_id in running_processes:
+            process = running_processes[task_id]
+            if process.poll() is None:
+                process.terminate()
+            del running_processes[task_id]
+            
+            # 更新状态
+            db.update_user_task(task_id, {
+                "status": "cancelled",
+                "message": "Task terminated by admin"
+            })
+            return {"message": "Task terminated successfully"}
+    
+    # 如果进程不在内存中（可能重启过），尝试直接从数据库获取任务并标记为取消
+    # 但我们不能确定进程是否真的还在跑（如果是多worker部署），这里假设单机
+    # 为了安全，只更新数据库状态
+    task = db.get_user_task_by_id(current_user["user_id"], task_id) # 这里有个小问题，admin需不需要传user_id查任务？
+    # 实际上 database_client GET task 需要 user_id，但 update 不需要
+    # 修改：直接 update
+    
+    db.update_user_task(task_id, {
+        "status": "cancelled",
+        "message": "Task marked as cancelled by admin"
+    })
+    
+    return {"message": "Task marked as cancelled"}
+
+
+@app.get("/api/admin/data")
+async def admin_get_all_data(current_user: Dict = Depends(get_current_admin_user)):
+    """管理员获取所有数据文件"""
+    data = db.get_all_data_global()
+    return {"data": data}
+
+
+@app.delete("/api/admin/users/{user_id}/data/{data_id}")
+async def admin_delete_user_data(user_id: int, data_id: int, current_user: Dict = Depends(get_current_admin_user)):
+    """管理员删除用户数据"""
+    success = db.delete_user_data(user_id, data_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Data file not found")
+    return {"message": "Data file deleted successfully"}
+
+
+if __name__ == "__main__":
+    # 读取配置文件
+    config_path = Path(__file__).parent / "config.yaml"
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    web_config = config['web_service']
+    
+    print("="*60)
+    print("🌐 Starting Web API Service")
+    print("="*60)
+    print(f"📊 Service: LLM Judge Web API")
+    print(f"🌐 URL: http://{web_config['host']}:{web_config['port']}")
+    print(f"📖 Docs: http://{web_config['host']}:{web_config['port']}/docs")
+    print(f"💾 Database Service: {web_config['database_service_url']}")
+    print("="*60)
+    
+    uvicorn.run(
+        "app:app",
+        host=web_config['host'],
+        port=web_config['port'],
+        reload=True
+    )

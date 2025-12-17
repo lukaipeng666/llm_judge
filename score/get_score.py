@@ -42,6 +42,7 @@ def process_score_item(result: Dict, scoring_func: Callable, badcase_threshold: 
             
     except Exception as e:
         print(f"\n评分出错: {e}")
+        print(result)
         result['error'] = str(e)
         result['is_badcase'] = 1
         is_badcase = True

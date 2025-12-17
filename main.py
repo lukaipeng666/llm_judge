@@ -5,6 +5,7 @@
 """
 
 import argparse
+import os
 from data_load.load_and_save import load_jsonl, load_custom_scoring_module
 from function_register.plugin import SCORING_FUNCTIONS_plugin, initialize_langdetect_profiles
 from result_gen.report import generate_report, aggregate_results
@@ -18,7 +19,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='大模型测评脚本')
     parser.add_argument('--api_urls', nargs='+', default="http://localhost:8000/generate/chat/completions", help='兼容OpenAI的地址')
     parser.add_argument('--model', default="Qwen/Qwen-1.8B-Chat", help='vllm模型名称')
-    parser.add_argument('--data_file', default='/Users/lukaipeng2/Desktop/intern/datasets/data_converted/COLDatasetTest.jsonl', help='测试数据文件路径')
+    parser.add_argument('--data_file', default=None, help='测试数据文件路径')
+    parser.add_argument('--data_id', type=int, default=None, help='数据库中的数据ID')
     parser.add_argument('--scoring', default='rouge', help='评分函数名称')
     parser.add_argument('--scoring_module', type=str, default="./function_register/plugin.py", help='自定义评分模块文件路径')
     parser.add_argument('--output', default='evaluation_report.json', help='评分报告输出文件路径')
@@ -26,6 +28,10 @@ def parse_args():
     parser.add_argument('--badcase_threshold', type=float, default=0.5, help='Badcase判断阈值')
     parser.add_argument('--report_dir', type=str, default='./reports', help='报告输出目录')
     parser.add_argument('--report_format', type=str, default='json, txt, badcases', help='报告格式，逗号分隔')
+    parser.add_argument('--output_json', action='store_true', help='将JSON报告输出到stdout')
+    parser.add_argument('--user_id', type=int, default=None, help='用户ID（output_json模式下必须）')
+    parser.add_argument('--task_id', type=str, default=None, help='任务ID（output_json模式下必须）')
+    parser.add_argument('--database_service_url', type=str, default=None, help='数据库服务URL（output_json模式下必须）')
     parser.add_argument('--test-mode', action='store_true', help='测试模式，不实际调用API')
     parser.add_argument('--sample-size', type=int, default=0, help='只测试指定数量的样本，0表示全部测试')
     parser.add_argument('--checkpoint_path', type=str, default=None, help='断点续测文件输出保存路径')
@@ -35,6 +41,7 @@ def parse_args():
     parser.add_argument('--timeout', type=int, default=600, help='API调用超时时间（秒）')
     parser.add_argument('--max-tokens', type=int, default=16384, help='API调用超时时间（秒）')
     parser.add_argument('--api_key', type=str, default="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help='API KEY')
+    parser.add_argument('--is_vllm', type=bool, default=False, help='是否使用vllm')
 
     return parser.parse_args()
 
@@ -55,10 +62,30 @@ def main():
         print(f"错误: 评分函数 '{args.scoring}' 未注册")
         print(f"可用的评分函数: {list(SCORING_FUNCTIONS_plugin.keys())}")
         exit(1)
-        
-    # 加载测试数据
-    print(f"加载测试数据: {args.data_file}")
-    test_data = load_jsonl(args.data_file)
+    
+
+    # 加载测试数据（支持本地文件或数据库）
+    if args.data_id and args.user_id and args.database_service_url:
+        print(f"从数据库加载测试数据: data_id={args.data_id}")
+        # 获取数据和文件名
+        import httpx
+        with httpx.Client(base_url=args.database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{args.user_id}/{args.data_id}")
+            response.raise_for_status()
+            result = response.json()
+            args.data_filename = result.get("filename", "unknown")  # 保存文件名到args
+        test_data = load_jsonl(
+            data_id=args.data_id,
+            user_id=args.user_id,
+            database_service_url=args.database_service_url
+        )
+    elif args.data_file:
+        print(f"加载测试数据: {args.data_file}")
+        test_data = load_jsonl(file_path=args.data_file)
+        args.data_filename = os.path.basename(args.data_file)  # 保存文件名到args
+    else:
+        print("错误: 必须指定 --data_file 或 --data_id")
+        exit(1)
     print(f"加载完成，共 {len(test_data)} 条数据")
     
     # 获取评分函数
@@ -73,6 +100,21 @@ def main():
     if args.sample_size > 0 and args.sample_size < len(test_data):
         test_data = test_data[:args.sample_size]
         print(f"使用样本数据: {args.sample_size} 条")
+    
+    # 进度回调函数，直接通过HTTP API保存进度到数据库
+    def progress_callback(phase: str, current: int, total: int, progress_pct: float):
+        if args.database_service_url and args.task_id:
+            try:
+                import httpx
+                with httpx.Client(base_url=args.database_service_url, timeout=5.0) as client:
+                    client.put(f"/api/user-tasks/{args.task_id}", json={
+                        "updates": {
+                            "progress": progress_pct,
+                            "message": f"{phase}: {current}/{total} ({progress_pct:.1f}%)"
+                        }
+                    })
+            except Exception:
+                pass  # 保存失败不影响主流程
     
     # 批量评估
     results, badcases = batch_evaluate(
@@ -89,29 +131,22 @@ def main():
         role_test=args.role,
         timeout=args.timeout,
         max_tokens=args.max_tokens,
-        api_key=args.api_key
+        api_key=args.api_key,
+        is_vllm=args.is_vllm,
+        progress_callback=progress_callback
     )
 
     # 汇总结果
     summary = aggregate_results(results)
-    
-    print(f"评估汇总:")
-    print(f"  总数据量: {summary.get('total_count', 0)}")
-    print(f"  正确数量: {summary.get('correct_count', 0)}")
-    print(f"  准确率: {summary.get('accuracy', 0):.4f}")
-    print(f"  平均分: {summary.get('average_score', 0):.4f}")
-    print(f"  平均推理时间: {summary.get('average_inference_time', 0):.4f}秒")
-    print(f"  Badcase数量: {len(badcases)}")
-    
-    if summary.get('rouge_scores'):
-        print(f"  ROUGE分数:")
-        for key, value in summary['rouge_scores'].items():
-            print(f"    {key}: {value:.4f}")
-    
     # 生成报告
     report_formats = [fmt.strip() for fmt in args.report_format.split(',')]
-    generate_report(summary, results, badcases, args.report_dir, report_formats, args)
-
+    # 无论什么模式，都先生成报告（保存到数据库或文件）
+    generate_report(
+        summary, results, badcases, args.report_dir, report_formats, args,
+        user_id=args.user_id,
+        task_id=args.task_id,
+        database_service_url=args.database_service_url
+    )
 
 if __name__ == "__main__":
     main()

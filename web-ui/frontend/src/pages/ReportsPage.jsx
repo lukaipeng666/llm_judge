@@ -18,16 +18,17 @@ import {
   FileTextOutlined,
   EyeOutlined,
   ReloadOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { useReportStore } from '../stores'
+import useStore from '../stores'
 
 const { Title, Text } = Typography
 const { Option } = Select
 
 function ReportsPage() {
   const navigate = useNavigate()
-  const { reports, loading, fetchReports } = useReportStore()
+  const { reports, loading, fetchReports, deleteReport } = useStore()
   const [filteredReports, setFilteredReports] = useState([])
   const [searchText, setSearchText] = useState('')
   const [selectedDataset, setSelectedDataset] = useState(null)
@@ -67,6 +68,18 @@ function ReportsPage() {
   const avgAccuracy = filteredReports.length > 0
     ? filteredReports.reduce((sum, r) => sum + (r.summary?.accuracy || 0), 0) / filteredReports.length
     : 0
+
+  const handleDelete = async (record) => {
+    if (!window.confirm(`确定要删除报告 "${record.dataset} - ${record.model}" 吗？`)) {
+      return
+    }
+    
+    try {
+      await deleteReport(record.id)
+    } catch (err) {
+      alert(`删除失败: ${err.message}`)
+    }
+  }
 
   const columns = [
     {
@@ -139,13 +152,23 @@ function ReportsPage() {
       title: '操作',
       key: 'action',
       render: (_, record) => (
-        <Button
-          type="link"
-          icon={<EyeOutlined />}
-          onClick={() => navigate(`/reports/${encodeURIComponent(record.dataset)}/${encodeURIComponent(record.model)}`)}
-        >
-          查看详情
-        </Button>
+        <Space>
+          <Button
+            type="link"
+            icon={<EyeOutlined />}
+            onClick={() => navigate(`/reports/${encodeURIComponent(record.dataset)}/${encodeURIComponent(record.model)}`)}
+          >
+            查看详情
+          </Button>
+          <Button
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDelete(record)}
+          >
+            删除
+          </Button>
+        </Space>
       ),
     },
   ]

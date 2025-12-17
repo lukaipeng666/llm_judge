@@ -16,6 +16,7 @@ import {
   Alert,
   Collapse,
   Tooltip,
+  AutoComplete,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -25,7 +26,7 @@ import {
   MinusCircleOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-import { useEvaluationStore, useTaskStore } from '../stores'
+import useStore from '../stores'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -62,9 +63,9 @@ function EvaluationPage() {
     fetchAvailableModels,
     setFormData,
     resetFormData,
-  } = useEvaluationStore()
+  } = useStore()
   
-  const { startEvaluation } = useTaskStore()
+  const { startEvaluation } = useStore()
 
   useEffect(() => {
     fetchScoringFunctions()
@@ -80,18 +81,38 @@ function EvaluationPage() {
     try {
       setSubmitting(true)
       
-      // 处理 API URLs (逗号分隔转数组)
+      // 数据处理，确保数字类型正常
       const config = {
         ...values,
+        // 处理 API URLs
         api_urls: typeof values.api_urls === 'string' 
           ? values.api_urls.split(',').map(url => url.trim()).filter(Boolean)
-          : values.api_urls,
+          : Array.isArray(values.api_urls) ? values.api_urls : [],
+        // 处理 model（为了匹配后端的 string 类型）
+        model: Array.isArray(values.model) ? values.model[0] : values.model,
+        // 处理 report_format（数组转逗号分隔字符串）
+        report_format: Array.isArray(values.report_format) 
+          ? values.report_format.join(', ') 
+          : values.report_format,
+        // 确保数字字段为整数
+        max_workers: parseInt(values.max_workers) || 4,
+        badcase_threshold: parseFloat(values.badcase_threshold) || 0.5,
+        max_tokens: parseInt(values.max_tokens) || 8000,
+        timeout: parseInt(values.timeout) || 600,
+        sample_size: parseInt(values.sample_size) || 0,
+        checkpoint_interval: parseInt(values.checkpoint_interval) || 32,
+        // 确保布尔值正常
+        test_mode: Boolean(values.test_mode),
+        resume: Boolean(values.resume),
+        is_vllm: Boolean(values.is_vllm),
       }
       
+      console.log('[DEBUG] Submitting config:', config)
       const result = await startEvaluation(config)
       message.success(`评测任务已创建，任务ID: ${result.task_id}`)
       navigate('/tasks')
     } catch (error) {
+      console.error('Error submitting:', error)
       message.error('启动评测失败: ' + (error.message || '未知错误'))
     } finally {
       setSubmitting(false)
@@ -169,13 +190,13 @@ function EvaluationPage() {
                 name="model"
                 rules={[{ required: true, message: '请输入或选择模型名称' }]}
               >
-                <Select
-                  showSearch
-                  allowClear
+                <AutoComplete
                   placeholder="选择或输入模型名称"
-                  mode="tags"
-                  maxTagCount={1}
-                  options={availableModels.map(m => ({ label: m, value: m }))}
+                  options={availableModels.map(m => ({ value: m, label: m }))}
+                  filterOption={(inputValue, option) =>
+                    option.value.toLowerCase().indexOf(inputValue.toLowerCase()) !== -1
+                  }
+                  allowClear
                 />
               </Form.Item>
             </Col>
@@ -183,7 +204,7 @@ function EvaluationPage() {
               <Form.Item
                 label="数据文件"
                 name="data_file"
-                rules={[{ required: true, message: '请选择或输入数据文件路径' }]}
+                rules={[{ required: true, message: '请选择数据文件' }]}
               >
                 <Select
                   showSearch
@@ -193,7 +214,7 @@ function EvaluationPage() {
                   optionFilterProp="children"
                 >
                   {dataFiles.map(file => (
-                    <Option key={file.path} value={file.path}>
+                    <Option key={file.id} value={String(file.id)}>
                       {file.name}
                     </Option>
                   ))}
@@ -237,10 +258,18 @@ function EvaluationPage() {
             </Col>
             <Col xs={24} lg={12}>
               <Form.Item
-                label="报告输出目录"
-                name="report_dir"
+                label={
+                  <Space>
+                    使用 vLLM 推理
+                    <Tooltip title="启用此功能将默认关闭本地模型的推理模式，改用 vLLM 加速推理">
+                      <QuestionCircleOutlined />
+                    </Tooltip>
+                  </Space>
+                }
+                name="is_vllm"
+                valuePropName="checked"
               >
-                <Input placeholder="./reports" />
+                <Switch />
               </Form.Item>
             </Col>
           </Row>

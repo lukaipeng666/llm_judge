@@ -1,0 +1,21 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+web-ui/frontend/dist/
+web-ui/frontend/node_modules/
+__pycache__/
+*.pyc

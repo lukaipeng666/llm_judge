@@ -12,39 +12,46 @@ import {
   message,
   Tooltip,
   Empty,
+  Input,
 } from 'antd'
 import {
   ReloadOutlined,
   StopOutlined,
   EyeOutlined,
   DeleteOutlined,
+  EditOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   LoadingOutlined,
   ClockCircleOutlined,
   ExclamationCircleOutlined,
 } from '@ant-design/icons'
-import { useTaskStore } from '../stores'
+import useStore from '../stores'
 
 const { Title, Text, Paragraph } = Typography
 
 function TasksPage() {
-  const { tasks, loading, fetchTasks, cancelTask } = useTaskStore()
+  const { tasks, loading, fetchTasks, cancelTask, deleteTask, updateTask } = useStore()
   const [detailVisible, setDetailVisible] = useState(false)
   const [selectedTask, setSelectedTask] = useState(null)
   const [refreshInterval, setRefreshInterval] = useState(null)
+  const [editVisible, setEditVisible] = useState(false)
+  const [editingTask, setEditingTask] = useState(null)
+  const [editMessage, setEditMessage] = useState('')
 
   useEffect(() => {
-    fetchTasks()
-    // 设置自动刷新
+    // 初始加载，显示 loading
+    fetchTasks(false)
+    
+    // 设置自动刷新，静默模式
     const interval = setInterval(() => {
-      fetchTasks()
-    }, 5000)
+      fetchTasks(true)  // 静默刷新，不显示 loading
+    }, 5000)  // 每 5 秒刷新一次
     setRefreshInterval(interval)
 
     return () => {
-      if (refreshInterval) {
-        clearInterval(refreshInterval)
+      if (interval) {
+        clearInterval(interval)
       }
     }
   }, [])
@@ -68,6 +75,40 @@ function TasksPage() {
         }
       },
     })
+  }
+
+  const handleDeleteTask = async (taskId) => {
+    Modal.confirm({
+      title: '确认删除任务',
+      content: '确定要删除这个任务吗？此操作不可恢复。',
+      icon: <ExclamationCircleOutlined />,
+      okText: '确认删除',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await deleteTask(taskId)
+          message.success('任务已删除')
+        } catch (error) {
+          message.error('删除任务失败')
+        }
+      },
+    })
+  }
+
+  const handleEditTask = (task) => {
+    setEditingTask(task)
+    setEditMessage(task.message || '')
+    setEditVisible(true)
+  }
+
+  const handleSaveEdit = async () => {
+    try {
+      await updateTask(editingTask.task_id, { message: editMessage })
+      message.success('任务备注已更新')
+      setEditVisible(false)
+    } catch (error) {
+      message.error('更新失败')
+    }
   }
 
   const getStatusIcon = (status) => {
@@ -180,7 +221,7 @@ function TasksPage() {
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: 160,
       render: (_, record) => (
         <Space size="small">
           <Tooltip title="查看详情">
@@ -190,6 +231,13 @@ function TasksPage() {
               onClick={() => handleViewDetail(record)}
             />
           </Tooltip>
+          <Tooltip title="编辑备注">
+            <Button
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => handleEditTask(record)}
+            />
+          </Tooltip>
           {record.status === 'running' && (
             <Tooltip title="取消任务">
               <Button
@@ -197,6 +245,16 @@ function TasksPage() {
                 danger
                 icon={<StopOutlined />}
                 onClick={() => handleCancelTask(record.task_id)}
+              />
+            </Tooltip>
+          )}
+          {['completed', 'failed', 'cancelled'].includes(record.status) && (
+            <Tooltip title="删除任务">
+              <Button
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => handleDeleteTask(record.task_id)}
               />
             </Tooltip>
           )}
@@ -213,7 +271,7 @@ function TasksPage() {
         </Title>
         <Button
           icon={<ReloadOutlined />}
-          onClick={fetchTasks}
+          onClick={() => fetchTasks(false)}  // 手动刷新显示 loading
           loading={loading}
         >
           刷新
@@ -306,6 +364,35 @@ function TasksPage() {
                 </Paragraph>
               </div>
             )}
+          </div>
+        )}
+      </Modal>
+
+      {/* 编辑任务弹窗 */}
+      <Modal
+        title="编辑任务备注"
+        open={editVisible}
+        onCancel={() => setEditVisible(false)}
+        onOk={handleSaveEdit}
+        okText="保存"
+        cancelText="取消"
+      >
+        {editingTask && (
+          <div>
+            <p><Text strong>任务 ID:</Text> {editingTask.task_id}</p>
+            <p><Text strong>当前状态:</Text> {getStatusTag(editingTask.status)}</p>
+            <div style={{ marginTop: 16 }}>
+              <Text strong>备注信息:</Text>
+              <Input.TextArea
+                value={editMessage}
+                onChange={(e) => setEditMessage(e.target.value)}
+                rows={4}
+                placeholder="输入任务备注..."
+                maxLength={500}
+                showCount
+                style={{ marginTop: 8 }}
+              />
+            </div>
           </div>
         )}
       </Modal>
