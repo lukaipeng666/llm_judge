@@ -60,7 +60,7 @@ def evaluate_toolbench(messages: list, model_output: str, reference_output: str)
     
     # 初始化评分和标志
     score = 0.0
-    is_badcase = 1
+    is_badcase = 0
     assessment_parts = []
     
     # 1. 格式评估：检查是否包含必要的三个部分
@@ -1127,7 +1127,7 @@ def evalutate_box(messages: list, model_output: str, reference_output: str) -> D
     reference_value = extract_boxed_value(reference_output)
     scores = {
         'score': 0.0,
-        'is_badcase': 1,
+        'is_badcase': 0,
         'details': {}
     }
     if model_value and reference_value:
@@ -1152,7 +1152,7 @@ def evaluate_rouge(messages: list, model_output: str, reference_output: str) -> 
     # 初始化评分结果
     scores = {
         'score': 0.0,
-        'is_badcase': 1,  # 默认标记为badcase
+        'is_badcase': 0,  # 默认标记为badcase
         'details': {}
     }
     
