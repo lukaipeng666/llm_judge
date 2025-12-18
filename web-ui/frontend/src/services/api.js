@@ -143,7 +143,10 @@ export const getReports = () => {
  * 获取报告详情
  */
 export const getReportDetail = (dataset, model) => {
-  return api.get(`/reports/${encodeURIComponent(dataset)}/${encodeURIComponent(model)}`)
+  // 使用查询参数而不是路径参数，以避免特殊字符问题
+  return api.get('/reports/detail', {
+    params: { dataset, model }
+  })
 }
 
 /**

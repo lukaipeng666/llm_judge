@@ -43,10 +43,16 @@ export default defineConfig({
     host: frontendConfig.host,
     proxy: {
       '/api': {
-        target: `http://${backendConfig.host}:${backendConfig.port}`,
+        // 0.0.0.0是监听地址，不能作为连接目标，必须用127.0.0.1
+        target: `http://127.0.0.1:${backendConfig.port}`,
         changeOrigin: true,
       },
     },
+    // 减少文件监听器的使用，避免 ENOSPC 错误
+    watch: {
+      usePolling: true,
+      interval: 1000,
+    }
   },
   resolve: {
     alias: {

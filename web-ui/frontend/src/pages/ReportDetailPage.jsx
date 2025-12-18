@@ -33,7 +33,8 @@ import useStore from '../stores'
 const { Title, Text, Paragraph } = Typography
 
 function ReportDetailPage() {
-  const { dataset, model } = useParams()
+  // 使用路径参数
+  const { dataset, model } = useParams();
   const navigate = useNavigate()
   const { currentReport, loading, fetchReportDetail } = useStore()
   const [selectedBadcase, setSelectedBadcase] = useState(null)
@@ -41,7 +42,8 @@ function ReportDetailPage() {
 
   useEffect(() => {
     if (dataset && model) {
-      fetchReportDetail(decodeURIComponent(dataset), decodeURIComponent(model)).then(data => {
+      // axios会自动处理URL编码，不需要手动解码
+      fetchReportDetail(dataset, model).then(data => {
         console.log('Report detail loaded:', data)
         console.log('Badcases count:', data?.badcases?.length)
       })

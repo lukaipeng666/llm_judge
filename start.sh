@@ -19,7 +19,7 @@ mkdir -p "$LOG_DIR"
 # 启动数据库服务
 echo "📊 启动数据库服务..."
 cd web-ui/backend
-nohup python3 -m uvicorn database.service.database_service:app --host 0.0.0.0 --port 8081 > "../logs/database.log" 2>&1 &
+nohup python3 -m uvicorn database.service.database_service:app --host 0.0.0.0 --port 16384 > "../logs/database.log" 2>&1 &
 DB_PID=$!
 cd ../..
 
@@ -28,7 +28,7 @@ echo "⏳ 等待数据库服务启动..."
 max_attempts=30
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
-    if curl -s http://localhost:8081/health > /dev/null 2>&1; then
+    if curl -s http://localhost:16384/health > /dev/null 2>&1; then
         echo "✅ 数据库服务启动成功 (PID: $DB_PID)"
         break
     fi
@@ -47,7 +47,7 @@ done
 echo "🌐 启动后端API服务..."
 cd web-ui/backend
 export PYTHONPATH="$PWD/../..:$PYTHONPATH"
-nohup python3 -m uvicorn api.app:app --host 0.0.0.0 --port 8080 > "../logs/backend.log" 2>&1 &
+nohup python3 -m uvicorn api.app:app --host 0.0.0.0 --port 16385 > "../logs/backend.log" 2>&1 &
 API_PID=$!
 cd ../..
 
@@ -56,7 +56,7 @@ echo "⏳ 等待后端API服务启动..."
 max_attempts=30
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
-    if curl -s http://localhost:8080/ > /dev/null 2>&1; then
+    if curl -s http://localhost:16385/ > /dev/null 2>&1; then
         echo "✅ 后端API服务启动成功 (PID: $API_PID)"
         break
     fi
@@ -74,7 +74,7 @@ done
 # 启动前端开发服务器
 echo "🎨 启动前端开发服务器..."
 cd web-ui/frontend
-nohup npm run dev -- --host 0.0.0.0 --port 5173 > "../logs/frontend.log" 2>&1 &
+nohup npm run dev -- --host 0.0.0.0 --port 16386 > "../logs/frontend.log" 2>&1 &
 FE_PID=$!
 cd ../..
 
@@ -93,16 +93,16 @@ echo ""
 echo "========================================="
 echo "✅ 所有服务启动成功"
 echo "========================================="
-echo "📊 数据库服务: http://localhost:8081"
-echo "   - API文档: http://localhost:8081/docs"
-echo "   - 健康检查: http://localhost:8081/health"
+echo "📊 数据库服务: http://localhost:16384"
+echo "   - API文档: http://localhost:16384/docs"
+echo "   - 健康检查: http://localhost:16384/health"
 echo ""
-echo "🌐 后端API服务: http://localhost:8080"
-echo "   - API文档: http://localhost:8080/docs"
+echo "🌐 后端API服务: http://localhost:16385"
+echo "   - API文档: http://localhost:16385/docs"
 echo ""
 echo "🎨 前端界面:"
-echo "   - 本机访问: http://localhost:5173"
-echo "   - 局域网访问: http://$LOCAL_IP:5173"
+echo "   - 本机访问: http://localhost:16386"
+echo "   - 局域网访问: http://$LOCAL_IP:16386"
 echo ""
 echo "📝 服务PID:"
 echo "   - 数据库: $DB_PID"

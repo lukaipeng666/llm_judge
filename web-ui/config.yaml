@@ -3,16 +3,16 @@
 # 数据库服务配置
 database_service:
   host: "0.0.0.0"
-  port: 8081
+  port: 16384
   database_url: "llm_judge.db"
 
 # Web API服务配置
 web_service:
   host: "0.0.0.0"
-  port: 8080
-  database_service_url: "http://localhost:8081"
+  port: 16385
+  database_service_url: "http://localhost:16384"
 
 # 前端服务配置
 frontend_service:
-  port: 5173
+  port: 16386
   host: "0.0.0.0"

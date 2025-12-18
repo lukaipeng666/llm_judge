@@ -90,13 +90,9 @@ function EvaluationPage() {
           : Array.isArray(values.api_urls) ? values.api_urls : [],
         // 处理 model（为了匹配后端的 string 类型）
         model: Array.isArray(values.model) ? values.model[0] : values.model,
-        // 处理 report_format（数组转逗号分隔字符串）
-        report_format: Array.isArray(values.report_format) 
-          ? values.report_format.join(', ') 
-          : values.report_format,
         // 确保数字字段为整数
         max_workers: parseInt(values.max_workers) || 4,
-        badcase_threshold: parseFloat(values.badcase_threshold) || 0.5,
+        badcase_threshold: parseFloat(values.badcase_threshold) || 1,
         max_tokens: parseInt(values.max_tokens) || 8000,
         timeout: parseInt(values.timeout) || 600,
         sample_size: parseInt(values.sample_size) || 0,
@@ -105,6 +101,9 @@ function EvaluationPage() {
         test_mode: Boolean(values.test_mode),
         resume: Boolean(values.resume),
         is_vllm: Boolean(values.is_vllm),
+        // 使用后端默认值
+        scoring_module: './function_register/plugin.py',
+        report_format: 'json, txt, badcases',
       }
       
       console.log('[DEBUG] Submitting config:', config)
@@ -338,26 +337,7 @@ function EvaluationPage() {
                       </Select>
                     </Form.Item>
                   </Col>
-                  <Col xs={24} lg={12}>
-                    <Form.Item
-                      label="评分模块路径"
-                      name="scoring_module"
-                    >
-                      <Input placeholder="./function_register/plugin.py" />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} lg={12}>
-                    <Form.Item
-                      label="报告格式"
-                      name="report_format"
-                    >
-                      <Select mode="tags" placeholder="选择报告格式">
-                        <Option value="json">JSON</Option>
-                        <Option value="txt">TXT</Option>
-                        <Option value="badcases">Badcases</Option>
-                      </Select>
-                    </Form.Item>
-                  </Col>
+
                 </Row>
               ),
             },

@@ -11,17 +11,23 @@ import yaml
 from pathlib import Path
 
 # 读取配置文件
-# 动态查找配置文件路径
-config_path = Path(__file__).parent / "config.yaml"
+# 使用更可靠的路径查找方式
+# 从当前文件位置向上查找配置文件
+current_path = Path(__file__).resolve()
+config_path = current_path.parent / "config.yaml"
 if not config_path.exists():
-    config_path = Path(__file__).parent.parent / "config.yaml"
+    config_path = current_path.parent.parent / "config.yaml"
 if not config_path.exists():
-    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    config_path = current_path.parent.parent.parent / "config.yaml"
 if not config_path.exists():
-    config_path = Path(__file__).parent.parent.parent.parent / "config.yaml"
+    config_path = current_path.parent.parent.parent.parent / "config.yaml"
 
 if not config_path.exists():
-    raise FileNotFoundError(f"Configuration file not found at {config_path}")
+    # 如果以上方式都找不到，尝试从项目根目录查找
+    project_root = current_path.parent.parent.parent.parent
+    config_path = project_root / "web-ui" / "config.yaml"
+    if not config_path.exists():
+        raise FileNotFoundError(f"Configuration file not found at {config_path}")
     
 with open(config_path, 'r', encoding='utf-8') as f:
     config = yaml.safe_load(f)

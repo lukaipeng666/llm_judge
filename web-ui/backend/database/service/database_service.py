@@ -3,7 +3,7 @@
 """
 独立的数据库服务
 提供RESTful API接口，供其他服务调用
-端口：8081
+端口：8081(默认)
 """
 
 from fastapi import FastAPI, HTTPException

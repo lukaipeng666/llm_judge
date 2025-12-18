@@ -10,6 +10,30 @@ from inputimeout import inputimeout, TimeoutOccurred
 from concurrent.futures import ProcessPoolExecutor, as_completed, ThreadPoolExecutor
 import multiprocessing
 
+# 进度回调辅助函数
+def report_progress(phase: str, current: int, total: int, progress_callback: Callable = None):
+    """报告进度，支持stdout和数据库API两种方式"""
+    # 整个流程分为三个阶段：
+    # 阶段1：获取模型输出 (0%-60%)
+    # 阶段2：评分处理 (60%-80%)
+    # 阶段3：保存报告 (80%-100%)
+    if phase == "获取模型输出":
+        # 获取模型输出阶段占总进度的60%
+        progress_pct = (current / total * 60) if total > 0 else 0
+    elif phase == "评分处理":
+        # 评分处理阶段占总进度的10% (60%-80%)
+        progress_pct = 60 + (current / total * 10) if total > 0 else 60
+    elif phase == "保存报告":
+        # 保存报告阶段占总进度的10% (80%-100%)
+        progress_pct = 80 + (current / total * 10) if total > 0 else 80
+    else:
+        # 其他阶段保持原有计算方式
+        progress_pct = (current / total * 100) if total > 0 else 0
+    
+    # 如果有回调函数，调用它
+    if progress_callback:
+        progress_callback(phase, current, total, progress_pct)
+
 
 def evaluate_single_item(item: Dict, api_url: str, item_index: int = 0, test_mode: bool = False, model: str = None, timeout: int = 600, api_key: str = None, max_tokens: int = 16384, is_vllm: bool = False) -> Dict[str, Any]:
     """
@@ -102,14 +126,6 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
     remaining_count = total_count - len(processed_indices)
     pbar = tqdm(total=remaining_count, desc="获取模型输出", unit="条")
     
-    # 进度回调辅助函数
-    def report_progress(phase: str, current: int, total: int):
-        """报告进度，支持stdout和数据库API两种方式"""
-        progress_pct = (current / total * 100) if total > 0 else 0
-        
-        # 如果有回调函数，调用它
-        if progress_callback:
-            progress_callback(phase, current, total, progress_pct)
     # 准备未处理的数据和对应的API URL
     unprocessed_data = []
     unprocessed_api_urls = []
@@ -147,7 +163,7 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                     unprocessed_api_urls[i],
                     global_idx,
                     test_mode,
-                    model,  # 注意：若 model 是大模型实例，多进程会复制多份（占用大量内存），下文有优化建议
+                    model,
                     timeout,
                     api_key,
                     max_tokens,
@@ -156,7 +172,7 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                 for i, global_idx in enumerate(unprocessed_global_indices)
             }
             
-            # 收集结果（逻辑与多线程一致，无需修改）
+            # 收集结果
             for i, future in enumerate(as_completed(future_to_index)):
                 global_idx = future_to_index[future]
                 try:
@@ -164,10 +180,10 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                     results.append(result)
                     pbar.update(1)
                     
-                    # 报告进度
-                    if i % 50 == 0:
+                    # 报告进度（每10条更新一次，确保更频繁的进度反馈）
+                    if i % 10 == 0 or i == len(future_to_index) - 1:
                         current_progress = len(results) - len(processed_indices)
-                        report_progress("获取模型输出", current_progress, remaining_count)
+                        report_progress("获取模型输出", current_progress, remaining_count, progress_callback)
                     
                     # 定期保存断点续测数据
                     if checkpoint_path and len(results) % checkpoint_interval == 0 and resume:
@@ -186,16 +202,15 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                     pbar.update(1)
                     
                     # 报告进度（即使出错也要报告）
-                    current_progress = len(results) - len(processed_indices)
-                    report_progress("获取模型输出", current_progress, remaining_count)
+                    if i % 10 == 0 or i == len(future_to_index) - 1:
+                        current_progress = len(results) - len(processed_indices)
+                        report_progress("获取模型输出", current_progress, remaining_count, progress_callback)
                     
                     # 出错时保存断点
                     if checkpoint_path and resume:
                         results_add = results[result_last_len:]
                         save_checkpoint(results_add, checkpoint_path)
                         result_last_len = len(results)
-            current_progress = len(results) - len(processed_indices)
-            report_progress("获取模型输出", current_progress, remaining_count)
 
     # 关闭进度条
     pbar.close()
@@ -264,7 +279,7 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                 }
                 
                 # 收集评分结果
-                for future in as_completed(future_to_index):
+                for j, future in enumerate(as_completed(future_to_index)):
                     try:
                         i, original_result = future_to_index[future]
                         scored_result, is_badcase = future.result()
@@ -278,9 +293,10 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                         if pbar:
                             pbar.update(1)
                         
-                        # 报告评分进度
-                        scored_count = sum(1 for fut in future_to_index if fut.done())
-                        report_progress("评分处理", scored_count, len(unscored_results))
+                        # 报告评分进度（每10条更新一次）
+                        if j % 50 == 0 or j == len(future_to_index) - 1:
+                            scored_count = sum(1 for fut in future_to_index if fut.done())
+                            report_progress("评分处理", scored_count, len(unscored_results), progress_callback)
                             
                     except Exception as e:
                         print(f"\n处理评分任务时出错: {e}")
@@ -289,7 +305,7 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                         
                         # 报告评分进度（即使出错）
                         scored_count = sum(1 for fut in future_to_index if fut.done())
-                        report_progress("评分处理", scored_count, len(unscored_results))
+                        report_progress("评分处理", scored_count, len(unscored_results), progress_callback)
             
         if pbar:
             pbar.close()

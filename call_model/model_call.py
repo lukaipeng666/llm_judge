@@ -13,11 +13,11 @@ def call_model_api(
     temperature: float = 0.0,
     max_tokens: int = 8192,
     retry_times: int = 3,
-    timeout: int = 600,
+    timeout: int = 300,
     is_vllm: bool = False,
 ) -> str:
     if is_vllm:
-        result = call_vllm_api(api_url, messages, model, max_tokens=max_tokens)
+        result = call_vllm_api(api_url, messages, model, max_tokens=max_tokens, retry_times=retry_times, timeout=timeout)
         return result
     else:
         result = call_openai_api(api_url, api_key, messages, model, temperature, max_tokens, retry_times, timeout)
@@ -30,7 +30,8 @@ def call_vllm_api(
     test_mode: bool = False,
     temperature: float = 0.0,
     max_tokens: int = 8192,
-    retry_times: int = 3
+    retry_times: int = 3,
+    timeout: int = 600,
 ) -> str:
     """
     同步调用vllm API（流式响应），兼容OpenAI格式的chat/completions端点
@@ -137,16 +138,17 @@ def call_openai_api(
     temperature: float = 0.0,
     max_tokens: int = 16384,
     retry_times: int = 3,
-    timeout: int = 600,
+    timeout: int = 300,
 ) -> str:
     """
     使用 openai Python 包调用兼容 OpenAI 接口的模型 API。
     """
-    # 1. 配置 openai 客户端（timeout 在这里设置）
+    # 1. 配置 openai 客户端（直接使用timeout参数）
     client = openai.OpenAI(
         api_key=api_key,
         base_url=api_url,
-        timeout=timeout
+        timeout=timeout,
+        max_retries=0
     )
 
     for attempt in range(retry_times):

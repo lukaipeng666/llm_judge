@@ -461,10 +461,16 @@ def create_user_report(user_id: int, task_id: str, dataset: str, model: str,
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    # 确保report_content是JSON字符串
+    if isinstance(report_content, dict):
+        report_content_str = json.dumps(report_content, ensure_ascii=False)
+    else:
+        report_content_str = report_content
+    
     cursor.execute('''
         INSERT INTO user_reports (user_id, task_id, dataset, model, report_content, timestamp, summary, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (user_id, task_id, dataset, model, report_content, timestamp, json.dumps(summary), datetime.now().isoformat()))
+    ''', (user_id, task_id, dataset, model, report_content_str, timestamp, json.dumps(summary), datetime.now().isoformat()))
     
     report_id = cursor.lastrowid
     conn.commit()
@@ -517,8 +523,14 @@ def get_user_report_by_path(user_id: int, dataset: str, model: str) -> Optional[
         report = dict(row)
         if report["summary"]:
             report["summary"] = json.loads(report["summary"])
-        if report["report_content"]:
-            report["report_content"] = json.loads(report["report_content"])
+        # 注意：report_content在保存时已经是JSON字符串，不需要再次解析
+        # 如果report_content已经是字符串，则直接返回
+        if report["report_content"] and isinstance(report["report_content"], str):
+            try:
+                report["report_content"] = json.loads(report["report_content"])
+            except json.JSONDecodeError:
+                # 如果解析失败，保持原样
+                pass
         return report
     return None
 
@@ -541,8 +553,14 @@ def get_user_report_by_id(user_id: int, report_id: int) -> Optional[Dict]:
         report = dict(row)
         if report["summary"]:
             report["summary"] = json.loads(report["summary"])
-        if report["report_content"]:
-            report["report_content"] = json.loads(report["report_content"])
+        # 注意：report_content在保存时已经是JSON字符串，不需要再次解析
+        # 如果report_content已经是字符串，则直接返回
+        if report["report_content"] and isinstance(report["report_content"], str):
+            try:
+                report["report_content"] = json.loads(report["report_content"])
+            except json.JSONDecodeError:
+                # 如果解析失败，保持原样
+                pass
         return report
     return None
 

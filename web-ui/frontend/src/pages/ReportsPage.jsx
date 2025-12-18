@@ -164,7 +164,10 @@ function ReportsPage() {
             type="link"
             danger
             icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record)}
+            onClick={(e) => {
+              e.stopPropagation();  // 阻止事件冒泡到行点击
+              handleDelete(record);
+            }}
           >
             删除
           </Button>

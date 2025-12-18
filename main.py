@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument('--scoring_module', type=str, default="./function_register/plugin.py", help='自定义评分模块文件路径')
     parser.add_argument('--output', default='evaluation_report.json', help='评分报告输出文件路径')
     parser.add_argument('--max_workers', type=int, default=4, help='最大工作线程数')
-    parser.add_argument('--badcase_threshold', type=float, default=0.5, help='Badcase判断阈值')
+    parser.add_argument('--badcase_threshold', type=float, default=1, help='Badcase判断阈值')
     parser.add_argument('--report_dir', type=str, default='./reports', help='报告输出目录')
     parser.add_argument('--report_format', type=str, default='json, txt, badcases', help='报告格式，逗号分隔')
     parser.add_argument('--output_json', action='store_true', help='将JSON报告输出到stdout')
@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument('--timeout', type=int, default=600, help='API调用超时时间（秒）')
     parser.add_argument('--max-tokens', type=int, default=16384, help='API调用超时时间（秒）')
     parser.add_argument('--api_key', type=str, default="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help='API KEY')
-    parser.add_argument('--is_vllm', type=bool, default=False, help='是否使用vllm')
+    parser.add_argument('--is_vllm', action='store_true', default=False, help='是否使用vllm')
 
     return parser.parse_args()
 
@@ -140,12 +140,13 @@ def main():
     summary = aggregate_results(results)
     # 生成报告
     report_formats = [fmt.strip() for fmt in args.report_format.split(',')]
-    # 无论什么模式，都先生成报告（保存到数据库或文件）
+
     generate_report(
         summary, results, badcases, args.report_dir, report_formats, args,
         user_id=args.user_id,
         task_id=args.task_id,
-        database_service_url=args.database_service_url
+        database_service_url=args.database_service_url,
+        progress_callback=progress_callback
     )
 
 if __name__ == "__main__":

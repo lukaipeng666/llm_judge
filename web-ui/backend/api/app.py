@@ -16,7 +16,7 @@ from collections import deque
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -35,7 +35,8 @@ if str(DB_CLIENT_PATH) not in sys.path:
 import database_client as db
 
 # 添加项目根目录到 Python 路径
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+# app.py 位于 web-ui/backend/api/，需要向上4层到达 llm-judge 根目录
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from function_register.plugin import SCORING_FUNCTIONS_plugin, initialize_langdetect_profiles
@@ -85,6 +86,15 @@ async def validation_exception_handler(request, exc):
 running_processes: Dict[str, subprocess.Popen] = {}
 processes_lock = threading.Lock()
 
+# 添加URL安全编码/解码辅助函数
+def url_safe_encode(value: str) -> str:
+    """URL安全编码"""
+    return quote(value, safe='')
+
+def url_safe_decode(value: str) -> str:
+    """URL安全解码"""
+    return unquote(value)
+
 def cleanup_finished_processes():
     """清理已结束的进程，防止内存泄漏"""
     with processes_lock:
@@ -108,7 +118,7 @@ class EvaluationConfig(BaseModel):
     scoring: str = "rouge"
     scoring_module: str = "./function_register/plugin.py"
     max_workers: int = 4
-    badcase_threshold: float = 0.5
+    badcase_threshold: float = 1
     report_format: str = "json, txt, badcases"
     test_mode: bool = False
     sample_size: int = 0
@@ -238,6 +248,20 @@ async def get_scoring_functions():
     return {
         "scoring_functions": list(SCORING_FUNCTIONS_plugin.keys())
     }
+
+
+@app.get("/api/models")
+async def get_available_models(current_user: Dict = Depends(get_current_user)):
+    """获取可用的模型列表(从用户历史报告中提取)"""
+    try:
+        reports = db.get_user_reports(current_user["user_id"])
+        # 从报告中提取唯一的模型名称
+        models = sorted(list(set(report["model"] for report in reports if report.get("model"))))
+        return {"models": models}
+    except Exception as e:
+        print(f"[ERROR] Failed to get available models: {str(e)}")
+        # 如果出错,返回空列表而不是抛出异常
+        return {"models": []}
 
 
 # ==================== 用户数据管理接口 ====================
@@ -462,7 +486,7 @@ async def get_reports(current_user: Dict = Depends(get_current_user)):
     return {"reports": reports}
 
 
-@app.get("/api/reports/{dataset}/{model}")
+@app.get("/api/reports/detail")
 async def get_report_detail(dataset: str, model: str, current_user: Dict = Depends(get_current_user)):
     """获取指定报告的详细信息"""
     try:
@@ -476,7 +500,15 @@ async def get_report_detail(dataset: str, model: str, current_user: Dict = Depen
             raise HTTPException(status_code=404, detail="Report not found or access denied")
         
         # 返回报告内容
-        return report["report_content"]
+        # 确保返回的是JSON对象而不是字符串
+        if isinstance(report["report_content"], str):
+            try:
+                return json.loads(report["report_content"])
+            except json.JSONDecodeError:
+                # 如果解析失败，返回原始字符串
+                return report["report_content"]
+        else:
+            return report["report_content"]
     except HTTPException:
         raise
     except Exception as e:
@@ -517,7 +549,7 @@ async def start_evaluation(config: EvaluationConfig, background_tasks: Backgroun
         
         # 构建命令行参数（不再需要临时文件和临时报告目录）
         # 读取配置文件获取数据库服务URL
-        config_path = Path(__file__).parent / "config.yaml"
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
         with open(config_path, 'r', encoding='utf-8') as f:
             yaml_config = yaml.safe_load(f)
         database_service_url = yaml_config['web_service']['database_service_url']
@@ -540,8 +572,11 @@ async def start_evaluation(config: EvaluationConfig, background_tasks: Backgroun
             "--user_id", str(current_user["user_id"]),
             "--task_id", task_id,
             "--database_service_url", database_service_url,
-            "--is_vllm", str(config.is_vllm),
         ]
+        
+        # is_vllm 只有在为 True 时才添加
+        if config.is_vllm:
+            cmd.append("--is_vllm")
         
         if config.test_mode:
             cmd.append("--test-mode")
@@ -796,7 +831,7 @@ async def admin_delete_user_data(user_id: int, data_id: int, current_user: Dict 
 
 if __name__ == "__main__":
     # 读取配置文件
-    config_path = Path(__file__).parent / "config.yaml"
+    config_path = Path(__file__).parent.parent.parent / "config.yaml"
     with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
     

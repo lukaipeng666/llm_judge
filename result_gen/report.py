@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Optional
 def generate_report(summary: Dict[str, Any], results: List[Dict], badcases: List[Dict], 
                    report_dir: str, report_formats: List[str], args: argparse.Namespace,
                    user_id: Optional[int] = None, task_id: Optional[str] = None,
-                   database_service_url: Optional[str] = None):
+                   database_service_url: Optional[str] = None, progress_callback: Optional[callable] = None):
     """
     生成评估报告
     Args:
@@ -21,6 +21,7 @@ def generate_report(summary: Dict[str, Any], results: List[Dict], badcases: List
         user_id: 用户ID（output_json模式下必须）
         task_id: 任务ID（output_json模式下必须）
         database_service_url: 数据库服务URL（output_json模式下必须）
+        progress_callback: 进度回调函数
     """
     try:
         # 准备报告数据
@@ -43,24 +44,52 @@ def generate_report(summary: Dict[str, Any], results: List[Dict], badcases: List
         
         # 通过HTTP API保存报告
         if user_id and task_id and database_service_url:
-            client = httpx.Client(base_url=database_service_url, timeout=30.0)
+            # 报告进度：开始保存报告（从90%开始）
+            if progress_callback:
+                progress_callback("保存报告", 0, 100, 90.0)
+            
+            client = httpx.Client(base_url=database_service_url, timeout=60.0)
             # 使用data_filename（已在main.py中设置），如果没有则使用data_file
             dataset_name = getattr(args, 'data_filename', None)
             if not dataset_name:
                 data_file_path = getattr(args, 'data_file', 'unknown')
                 dataset_name = os.path.basename(data_file_path) if data_file_path and data_file_path != 'unknown' else 'unknown'
             
+            # 序列化报告内容（93%）
+            if progress_callback:
+                progress_callback("保存报告", 30, 100, 93.0)
+            
+            report_content_json = json.dumps(report_data, ensure_ascii=False)
+            
+            # 记录报告大小用于日志
+            report_size_mb = len(report_content_json.encode('utf-8')) / (1024 * 1024)
+            print(f"[INFO] 报告大小: {report_size_mb:.2f} MB，开始保存到数据库...")
+            
+            # 发送POST请求保存报告（96%）
+            if progress_callback:
+                progress_callback("保存报告", 60, 100, 96.0)
+            
             response = client.post("/api/user-reports", json={
                 "user_id": user_id,
                 "task_id": task_id,
                 "dataset": dataset_name,
                 "model": getattr(args, 'model', 'unknown'),
-                "report_content": json.dumps(report_data, ensure_ascii=False),
+                "report_content": report_content_json,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "summary": summary
             })
+            
+            # 请求完成（98%）
+            if progress_callback:
+                progress_callback("保存报告", 80, 100, 98.0)
+            
             response.raise_for_status()
             client.close()
+            
+            # 报告进度：保存完成（100%）
+            if progress_callback:
+                progress_callback("保存报告", 100, 100, 100.0)
+            
             print(f"[INFO] 报告已保存到数据库，Report ID: {response.json().get('report_id')}")
         else:
             print("[WARNING] output_json模式但缺少user_id、task_id或database_service_url，无法保存到数据库")
