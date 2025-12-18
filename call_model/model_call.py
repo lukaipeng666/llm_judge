@@ -15,12 +15,13 @@ def call_model_api(
     retry_times: int = 3,
     timeout: int = 300,
     is_vllm: bool = False,
+    top_p: float = 1.0,
 ) -> str:
     if is_vllm:
-        result = call_vllm_api(api_url, messages, model, max_tokens=max_tokens, retry_times=retry_times, timeout=timeout)
+        result = call_vllm_api(api_url, messages, model, max_tokens=max_tokens, retry_times=retry_times, timeout=timeout, temperature=temperature, top_p=top_p)
         return result
     else:
-        result = call_openai_api(api_url, api_key, messages, model, temperature, max_tokens, retry_times, timeout)
+        result = call_openai_api(api_url, api_key, messages, model, temperature, max_tokens, retry_times, timeout, top_p=top_p)
         return result
 
 def call_vllm_api(
@@ -32,6 +33,7 @@ def call_vllm_api(
     max_tokens: int = 8192,
     retry_times: int = 3,
     timeout: int = 600,
+    top_p: float = 1.0,
 ) -> str:
     """
     同步调用vllm API（流式响应），兼容OpenAI格式的chat/completions端点
@@ -59,15 +61,18 @@ def call_vllm_api(
             "\\boxed{0}"
         ]
         return random.choice(possible_outputs)
+
+    do_sample = temperature > 0.0
     
     # 构建请求参数（流式响应）
     payload = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
+        "top_p": top_p,
         "max_tokens": max_tokens,
         "stream": True,
-        "do_sample": False,
+        "do_sample": do_sample,
         "chat_template_kwargs": {"enable_thinking": False},
     }
     
@@ -139,6 +144,7 @@ def call_openai_api(
     max_tokens: int = 16384,
     retry_times: int = 3,
     timeout: int = 300,
+    top_p: float = 1.0,
 ) -> str:
     """
     使用 openai Python 包调用兼容 OpenAI 接口的模型 API。
@@ -157,6 +163,7 @@ def call_openai_api(
                 model=model,
                 messages=messages,
                 temperature=temperature,
+                top_p=top_p,
                 max_tokens=max_tokens
             )
             # 提取回复内容

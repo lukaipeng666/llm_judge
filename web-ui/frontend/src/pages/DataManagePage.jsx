@@ -5,11 +5,9 @@ import './DataManagePage.css'
 
 export default function DataManagePage() {
   const navigate = useNavigate()
-  const { userDataFiles, fetchUserDataFiles, uploadUserDataFile, updateUserDataFile, deleteUserDataFile, loading, error } = useStore()
+  const { userDataFiles, fetchUserDataFiles, uploadUserDataFile, deleteUserDataFile, loading, error } = useStore()
   
   const [uploading, setUploading] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [editDescription, setEditDescription] = useState('')
 
   useEffect(() => {
     fetchUserDataFiles()
@@ -37,25 +35,6 @@ export default function DataManagePage() {
     }
   }
 
-  const handleEdit = (dataFile) => {
-    setEditingId(dataFile.id)
-    setEditDescription(dataFile.description || '')
-  }
-
-  const handleSaveEdit = async (id) => {
-    try {
-      await updateUserDataFile(id, editDescription)
-      setEditingId(null)
-      alert('更新成功')
-    } catch (err) {
-      alert(err.message || '更新失败')
-    }
-  }
-
-  const handleCancelEdit = () => {
-    setEditingId(null)
-    setEditDescription('')
-  }
 
   const handleViewDetail = (dataId) => {
     navigate(`/data-detail/${dataId}`)
@@ -130,17 +109,7 @@ export default function DataManagePage() {
                 <tr key={dataFile.id}>
                   <td className="filename">{dataFile.filename}</td>
                   <td className="description">
-                    {editingId === dataFile.id ? (
-                      <input
-                        type="text"
-                        value={editDescription}
-                        onChange={(e) => setEditDescription(e.target.value)}
-                        placeholder="输入描述..."
-                        className="edit-input"
-                      />
-                    ) : (
-                      <span>{dataFile.description || '-'}</span>
-                    )}
+                    <span>{dataFile.description || '-'}</span>
                   </td>
                   <td className="file-size">
                     {formatFileSize(dataFile.file_size || 0)}
@@ -149,43 +118,18 @@ export default function DataManagePage() {
                     {new Date(dataFile.created_at).toLocaleString('zh-CN')}
                   </td>
                   <td className="actions">
-                    {editingId === dataFile.id ? (
-                      <>
-                        <button
-                          onClick={() => handleSaveEdit(dataFile.id)}
-                          className="action-btn save-btn"
-                        >
-                          保存
-                        </button>
-                        <button
-                          onClick={handleCancelEdit}
-                          className="action-btn cancel-btn"
-                        >
-                          取消
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => handleViewDetail(dataFile.id)}
-                          className="action-btn view-btn"
-                        >
-                          查看
-                        </button>
-                        <button
-                          onClick={() => handleEdit(dataFile)}
-                          className="action-btn edit-btn"
-                        >
-                          编辑
-                        </button>
-                        <button
-                          onClick={() => handleDelete(dataFile.id, dataFile.filename)}
-                          className="action-btn delete-btn"
-                        >
-                          删除
-                        </button>
-                      </>
-                    )}
+                    <button
+                      onClick={() => handleViewDetail(dataFile.id)}
+                      className="action-btn view-btn"
+                    >
+                      查看/编辑
+                    </button>
+                    <button
+                      onClick={() => handleDelete(dataFile.id, dataFile.filename)}
+                      className="action-btn delete-btn"
+                    >
+                      删除
+                    </button>
                   </td>
                 </tr>
               ))}

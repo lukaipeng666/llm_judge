@@ -49,10 +49,12 @@ const useStore = create((set, get) => ({
     checkpoint_interval: 32,
     resume: false,
     role: 'assistant',
-    timeout: 600,
-    max_tokens: 8000,
+    timeout: 10,
+    max_tokens: 1024,
     api_key: 'sk-xxx',
-    is_vllm: false,
+    is_vllm: true,
+    temperature: 0.0,
+    top_p: 1.0,
   },
 
   // ==================== 任务管理 ====================
@@ -142,10 +144,12 @@ const useStore = create((set, get) => ({
       checkpoint_interval: 32,
       resume: false,
       role: 'assistant',
-      timeout: 600,
-      max_tokens: 8000,
+      timeout: 10,
+      max_tokens: 1024,
       api_key: 'sk-xxx',
-      is_vllm: false,
+      is_vllm: true,
+      temperature: 0.0,
+      top_p: 1.0,
     }
   })),
 
@@ -236,6 +240,7 @@ const useStore = create((set, get) => ({
   },
 
   clearDataDetail: () => set({ currentDataDetail: null }),
+
 
   // ==================== Actions: 任务管理 ====================
   

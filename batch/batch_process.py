@@ -35,7 +35,7 @@ def report_progress(phase: str, current: int, total: int, progress_callback: Cal
         progress_callback(phase, current, total, progress_pct)
 
 
-def evaluate_single_item(item: Dict, api_url: str, item_index: int = 0, test_mode: bool = False, model: str = None, timeout: int = 600, api_key: str = None, max_tokens: int = 16384, is_vllm: bool = False) -> Dict[str, Any]:
+def evaluate_single_item(item: Dict, api_url: str, item_index: int = 0, test_mode: bool = False, model: str = None, timeout: int = 600, api_key: str = None, max_tokens: int = 16384, is_vllm: bool = False, temperature: float = 0.0, top_p: float = 1.0) -> Dict[str, Any]:
     """
     获取单个数据项的模型输出（不进行评分）
     Args:
@@ -53,7 +53,7 @@ def evaluate_single_item(item: Dict, api_url: str, item_index: int = 0, test_mod
     
     # 调用API获取模型输出
     start_time = time.time()
-    model_output = call_model_api(api_url, api_key, messages, model, max_tokens=max_tokens, timeout=timeout, is_vllm=is_vllm)
+    model_output = call_model_api(api_url, api_key, messages, model, max_tokens=max_tokens, timeout=timeout, is_vllm=is_vllm, temperature=temperature, top_p=top_p)
     inference_time = time.time() - start_time
     
     # 构建结果字典（不进行评分）
@@ -74,7 +74,7 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                   checkpoint_path: str = None, checkpoint_interval: int = 10,
                   resume: bool = False, role_test: str = "assistant",
                   timeout: int = 600, max_tokens: int = 16384, api_key: str = None,
-                  is_vllm: bool = False,
+                  is_vllm: bool = False, temperature: float = 0.0, top_p: float = 1.0,
                   progress_callback: Callable = None) -> Tuple[List[Dict], List[Dict]]:
     """
     批量评估数据：先获取所有模型输出，再统一评分（并行处理评分）
@@ -168,6 +168,8 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
                     api_key,
                     max_tokens,
                     is_vllm,
+                    temperature,
+                    top_p,
                 ): global_idx 
                 for i, global_idx in enumerate(unprocessed_global_indices)
             }

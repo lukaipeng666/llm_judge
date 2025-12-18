@@ -835,6 +835,39 @@ def evaluate_reject_function(messages: list, model_output: str, reference_output
         scores["is_badcase"] = 1
     return scores
 
+def _extract_json_from_text(text: str) -> str:
+    """
+    从文本中提取 JSON 内容，支持多种格式：
+    1. ```json 代码块
+    2. ``` 代码块（无语言标记）
+    3. 纯 JSON 字符串
+    """
+    if not text:
+        return text
+    
+    # 尝试匹配 ```json 代码块
+    json_pattern = r'```json\s*(.*?)\s*```'
+    match = re.search(json_pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    
+    # 尝试匹配 ``` 代码块（无语言标记）
+    code_block_pattern = r'```\s*(.*?)\s*```'
+    match = re.search(code_block_pattern, text, re.DOTALL)
+    if match:
+        content = match.group(1).strip()
+        # 检查内容是否以 { 或 [ 开头（可能是 JSON）
+        if content.startswith(('{', '[')):
+            return content
+    
+    # 尝试直接解析为 JSON（纯 JSON 字符串）
+    text_stripped = text.strip()
+    if text_stripped.startswith(('{', '[')):
+        return text_stripped
+    
+    # 如果都不匹配，返回原文本
+    return text
+
 @register_scoring_function('json_check')
 def evaluate_COLDataset(messages: list, model_output: str, reference_output: str) -> Dict[str, Any]:
     scores = {
@@ -843,36 +876,38 @@ def evaluate_COLDataset(messages: list, model_output: str, reference_output: str
         "details": {},
     }
     try:
-        json_pattern = r'```json\s*(.*?)\s*```'
-        json_match_model_output = re.search(json_pattern, model_output, re.DOTALL)
+        # 从 model_output 中提取 JSON
+        extracted_model_json = _extract_json_from_text(model_output)
+        
+        # 从 reference_output 中提取 JSON
+        extracted_reference_json = _extract_json_from_text(reference_output)
+        
+        # 解析 JSON
+        json_match_reference_output = json.loads(extracted_reference_json)
+        json_match_model_output = json.loads(extracted_model_json)
 
-        if "```json" in reference_output:
-            reference_output = re.search(json_pattern, reference_output, re.DOTALL)
-            if reference_output:
-                reference_output = reference_output.group(1)
-
-        json_match_reference_output = json.loads(reference_output)
-
-        if json_match_model_output and isinstance(json_match_reference_output, dict):
-            json_match_model_output = json_match_model_output.group(1)
-            json_match_model_output = json.loads(json_match_model_output)
-            if isinstance(json_match_model_output, dict):
-                for key in json_match_reference_output:
-                    if key in json_match_model_output and str(json_match_model_output[key]).lower() == str(json_match_reference_output[key]).lower():
-                        scores["score"] += 1
-                if scores["score"] < len(json_match_reference_output):
-                    scores["is_badcase"] = 1
-                    scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)
-                scores["score"] = scores["score"] / len(json_match_reference_output)
-            else:
+        if isinstance(json_match_reference_output, dict) and isinstance(json_match_model_output, dict):
+            for key in json_match_reference_output:
+                if key in json_match_model_output and str(json_match_model_output[key]).lower() == str(json_match_reference_output[key]).lower():
+                    scores["score"] += 1
+            if scores["score"] < len(json_match_reference_output):
                 scores["is_badcase"] = 1
                 scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)
+            scores["score"] = scores["score"] / len(json_match_reference_output)
         else:
             scores["is_badcase"] = 1
             scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)
+            scores['details']["error"] = "JSON 格式不正确：期望字典类型"
     except json.JSONDecodeError as e:
         scores["is_badcase"] = 1
         scores['details']["error"] = str(e)
+        scores['details']["model_output"] = model_output
+        scores['details']["reference_output"] = reference_output
+    except Exception as e:
+        scores["is_badcase"] = 1
+        scores['details']["error"] = f"解析错误: {str(e)}"
+        scores['details']["model_output"] = model_output
+        scores['details']["reference_output"] = reference_output
 
     return scores
 

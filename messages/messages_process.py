@@ -10,7 +10,7 @@ def prepare_prompt(item: Dict, role_test: str = "assistant") -> str:
         格式化的提示文本
     """
     # 从meta中获取system prompt
-    system_prompt = item.get('meta', {}).get('meta_descriptional', '')
+    system_prompt = item.get('meta', {}).get('meta_description', '')
     messages_packge = []
     messages = [
         {"role": "system", "content": system_prompt},

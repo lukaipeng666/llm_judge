@@ -17,5 +17,6 @@ Thumbs.db
 # Build outputs
 web-ui/frontend/dist/
 web-ui/frontend/node_modules/
+/Users/yunlongdeng/Zhuiyi/boweneval/web-ui/frontend/node_modules
 __pycache__/
 *.pyc
