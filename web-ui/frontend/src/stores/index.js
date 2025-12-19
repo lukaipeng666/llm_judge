@@ -111,6 +111,14 @@ const useStore = create((set, get) => ({
   logout: () => {
     removeToken()
     removeUser()
+    // 清除可视化图表配置缓存
+    try {
+      localStorage.removeItem('visualization_chart_type')
+      localStorage.removeItem('visualization_bar_charts')
+      localStorage.removeItem('visualization_radar_charts')
+    } catch (err) {
+      console.error('清除图表配置缓存失败:', err)
+    }
     set({ 
       token: null, 
       user: null, 

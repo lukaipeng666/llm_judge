@@ -46,7 +46,7 @@ const menuItems = [
   {
     key: '/results',
     icon: <BarChartOutlined />,
-    label: '结果分析',
+    label: '可视化',
   },
 ]
 

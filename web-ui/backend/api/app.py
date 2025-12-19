@@ -12,12 +12,12 @@ import asyncio
 import subprocess
 import threading
 import shutil
-from collections import deque
-from datetime import datetime
+from collections import deque, defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from urllib.parse import unquote, quote
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -85,6 +85,12 @@ async def validation_exception_handler(request, exc):
 # 使用弱引用避免内存泄漏，并添加自动清理机制
 running_processes: Dict[str, subprocess.Popen] = {}
 processes_lock = threading.Lock()
+
+# 自动注册限制：IP频率限制
+auto_register_rate_limit: Dict[str, List[datetime]] = defaultdict(list)
+rate_limit_lock = threading.Lock()
+RATE_LIMIT_WINDOW = timedelta(minutes=5)  # 5分钟窗口
+RATE_LIMIT_MAX_REQUESTS = 10  # 每个IP最多10次请求
 
 # 添加URL安全编码/解码辅助函数
 def url_safe_encode(value: str) -> str:
@@ -225,6 +231,86 @@ async def login(credentials: UserLogin):
         "token_type": "bearer",
         "user": user
     }
+
+
+def check_rate_limit(client_ip: str) -> bool:
+    """检查IP频率限制"""
+    with rate_limit_lock:
+        now = datetime.now()
+        # 清理过期的请求记录
+        auto_register_rate_limit[client_ip] = [
+            req_time for req_time in auto_register_rate_limit[client_ip]
+            if now - req_time < RATE_LIMIT_WINDOW
+        ]
+        
+        # 检查是否超过限制
+        if len(auto_register_rate_limit[client_ip]) >= RATE_LIMIT_MAX_REQUESTS:
+            return False
+        
+        # 记录本次请求
+        auto_register_rate_limit[client_ip].append(now)
+        return True
+
+
+@app.post("/api/auth/auto-login", response_model=Token)
+async def auto_login(credentials: UserLogin, request: Request):
+    """
+    自动注册并登录
+    如果用户不存在，自动注册；如果存在，验证密码并登录
+    用于外部系统免密登录集成
+    
+    安全限制：
+    1. admin用户不能使用此接口自动登录
+    2. 自动注册有频率限制（每个IP 5分钟内最多10次）
+    """
+    # 禁止admin用户使用自动登录
+    if credentials.username.lower() == "admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Admin users cannot use auto-login. Please use the regular login endpoint."
+        )
+    
+    # 获取客户端IP
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # 先尝试验证用户（登录）
+    user = db.verify_user(credentials.username, credentials.password)
+    
+    if user:
+        # 用户存在且密码正确，直接登录
+        access_token = create_access_token(data={"user_id": user["id"], "username": user["username"]})
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": user
+        }
+    
+    # 用户不存在或密码错误，尝试注册
+    # 检查频率限制（仅对注册请求进行限制）
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many auto-register requests. Maximum {RATE_LIMIT_MAX_REQUESTS} requests per {RATE_LIMIT_WINDOW.seconds // 60} minutes."
+        )
+    
+    # 检查用户是否已存在（通过尝试创建用户）
+    user_id = db.create_user(credentials.username, credentials.password, None)
+    
+    if user_id:
+        # 注册成功，生成token
+        access_token = create_access_token(data={"user_id": user_id, "username": credentials.username})
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user_id,
+                "username": credentials.username,
+                "email": None
+            }
+        }
+    else:
+        # 用户已存在但密码错误
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
 @app.get("/api/auth/me")

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { Form, Input, Button, Card, Typography, message, ConfigProvider } from 'antd'
 import { UserOutlined, LockOutlined, MailOutlined, RocketOutlined } from '@ant-design/icons'
 import useStore from '../stores'
@@ -9,11 +9,19 @@ const { Title, Text } = Typography
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const { login, register } = useStore()
+  const location = useLocation()
+  const { login, register, isAuthenticated } = useStore()
 
   const [isLogin, setIsLogin] = useState(true)
   const [loading, setLoading] = useState(false)
   const [form] = Form.useForm()
+
+  // 如果已经登录，重定向到首页
+  useEffect(() => {
+    if (isAuthenticated) {
+      navigate('/', { replace: true })
+    }
+  }, [isAuthenticated, navigate])
 
   const onFinish = async (values) => {
     setLoading(true)
