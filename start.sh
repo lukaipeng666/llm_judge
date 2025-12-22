@@ -12,6 +12,31 @@ if [ ! -f "web-ui/backend/database/service/database_service.py" ] || [ ! -f "web
     exit 1
 fi
 
+# 端口检测和清理
+echo "🔍 检测端口占用情况..."
+PORTS=(16384 16385 16386)
+PORT_NAMES=("数据库服务" "后端API服务" "前端开发服务器")
+for i in "${!PORTS[@]}"; do
+    PORT=${PORTS[$i]}
+    NAME=${PORT_NAMES[$i]}
+    PID=$(lsof -ti:$PORT 2>/dev/null)
+    if [ -n "$PID" ]; then
+        echo "⚠️  检测到端口 $PORT ($NAME) 被进程 $PID 占用，正在终止..."
+        kill -9 $PID 2>/dev/null
+        sleep 1
+        # 再次检查是否成功终止
+        PID_CHECK=$(lsof -ti:$PORT 2>/dev/null)
+        if [ -n "$PID_CHECK" ]; then
+            echo "❌ 无法终止占用端口 $PORT 的进程，请手动检查"
+        else
+            echo "✅ 端口 $PORT 已释放"
+        fi
+    else
+        echo "✅ 端口 $PORT ($NAME) 可用"
+    fi
+done
+echo ""
+
 # 创建日志目录
 LOG_DIR="./web-ui/logs"
 mkdir -p "$LOG_DIR"
