@@ -12,9 +12,80 @@ if [ ! -f "web-ui/backend/database/service/database_service.py" ] || [ ! -f "web
     exit 1
 fi
 
+# 从 config.yaml 读取端口配置
+CONFIG_FILE="web-ui/config.yaml"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ Error: 配置文件 $CONFIG_FILE 不存在"
+    exit 1
+fi
+
+# 使用 Python 解析 YAML 配置文件
+DB_PORT=$(python3 -c "
+import yaml
+import sys
+try:
+    with open('$CONFIG_FILE', 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+        db_port = config.get('database_service', {}).get('port')
+        if db_port:
+            print(db_port)
+        else:
+            print('16384', file=sys.stderr)
+            sys.exit(1)
+except Exception as e:
+    print('Error: 无法读取数据库服务端口配置', file=sys.stderr)
+    sys.exit(1)
+") || exit 1
+
+WEB_PORT=$(python3 -c "
+import yaml
+import sys
+try:
+    with open('$CONFIG_FILE', 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+        web_port = config.get('web_service', {}).get('port')
+        if web_port:
+            print(web_port)
+        else:
+            print('16385', file=sys.stderr)
+            sys.exit(1)
+except Exception as e:
+    print('Error: 无法读取后端API服务端口配置', file=sys.stderr)
+    sys.exit(1)
+") || exit 1
+
+FE_PORT=$(python3 -c "
+import yaml
+import sys
+try:
+    with open('$CONFIG_FILE', 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+        fe_port = config.get('frontend_service', {}).get('port')
+        if fe_port:
+            print(fe_port)
+        else:
+            print('16386', file=sys.stderr)
+            sys.exit(1)
+except Exception as e:
+    print('Error: 无法读取前端服务端口配置', file=sys.stderr)
+    sys.exit(1)
+") || exit 1
+
+# 验证端口是否成功读取
+if [ -z "$DB_PORT" ] || [ -z "$WEB_PORT" ] || [ -z "$FE_PORT" ]; then
+    echo "❌ Error: 无法从配置文件读取端口信息"
+    exit 1
+fi
+
+echo "📋 从配置文件读取的端口:"
+echo "   - 数据库服务: $DB_PORT"
+echo "   - 后端API服务: $WEB_PORT"
+echo "   - 前端服务: $FE_PORT"
+echo ""
+
 # 端口检测和清理
 echo "🔍 检测端口占用情况..."
-PORTS=(16384 16385 16386)
+PORTS=($DB_PORT $WEB_PORT $FE_PORT)
 PORT_NAMES=("数据库服务" "后端API服务" "前端开发服务器")
 for i in "${!PORTS[@]}"; do
     PORT=${PORTS[$i]}
@@ -44,7 +115,7 @@ mkdir -p "$LOG_DIR"
 # 启动数据库服务
 echo "📊 启动数据库服务..."
 cd web-ui/backend
-nohup python3 -m uvicorn database.service.database_service:app --host 0.0.0.0 --port 16384 > "../logs/database.log" 2>&1 &
+nohup python3 -m uvicorn database.service.database_service:app --host 0.0.0.0 --port $DB_PORT > "../logs/database.log" 2>&1 &
 DB_PID=$!
 cd ../..
 
@@ -53,7 +124,7 @@ echo "⏳ 等待数据库服务启动..."
 max_attempts=30
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
-    if curl -s http://localhost:16384/health > /dev/null 2>&1; then
+    if curl -s http://localhost:$DB_PORT/health > /dev/null 2>&1; then
         echo "✅ 数据库服务启动成功 (PID: $DB_PID)"
         break
     fi
@@ -72,7 +143,7 @@ done
 echo "🌐 启动后端API服务..."
 cd web-ui/backend
 export PYTHONPATH="$PWD/../..:$PYTHONPATH"
-nohup python3 -m uvicorn api.app:app --host 0.0.0.0 --port 16385 > "../logs/backend.log" 2>&1 &
+nohup python3 -m uvicorn api.app:app --host 0.0.0.0 --port $WEB_PORT > "../logs/backend.log" 2>&1 &
 API_PID=$!
 cd ../..
 
@@ -81,7 +152,7 @@ echo "⏳ 等待后端API服务启动..."
 max_attempts=30
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
-    if curl -s http://localhost:16385/ > /dev/null 2>&1; then
+    if curl -s http://localhost:$WEB_PORT/ > /dev/null 2>&1; then
         echo "✅ 后端API服务启动成功 (PID: $API_PID)"
         break
     fi
@@ -99,7 +170,7 @@ done
 # 启动前端开发服务器
 echo "🎨 启动前端开发服务器..."
 cd web-ui/frontend
-nohup npm run dev -- --host 0.0.0.0 --port 16386 > "../logs/frontend.log" 2>&1 &
+nohup npm run dev -- --host 0.0.0.0 --port $FE_PORT > "../logs/frontend.log" 2>&1 &
 FE_PID=$!
 cd ../..
 
@@ -118,16 +189,16 @@ echo ""
 echo "========================================="
 echo "✅ 所有服务启动成功"
 echo "========================================="
-echo "📊 数据库服务: http://localhost:16384"
-echo "   - API文档: http://localhost:16384/docs"
-echo "   - 健康检查: http://localhost:16384/health"
+echo "📊 数据库服务: http://localhost:$DB_PORT"
+echo "   - API文档: http://localhost:$DB_PORT/docs"
+echo "   - 健康检查: http://localhost:$DB_PORT/health"
 echo ""
-echo "🌐 后端API服务: http://localhost:16385"
-echo "   - API文档: http://localhost:16385/docs"
+echo "🌐 后端API服务: http://localhost:$WEB_PORT"
+echo "   - API文档: http://localhost:$WEB_PORT/docs"
 echo ""
 echo "🎨 前端界面:"
-echo "   - 本机访问: http://localhost:16386"
-echo "   - 局域网访问: http://$LOCAL_IP:16386"
+echo "   - 本机访问: http://localhost:$FE_PORT"
+echo "   - 局域网访问: http://$LOCAL_IP:$FE_PORT"
 echo ""
 echo "📝 服务PID:"
 echo "   - 数据库: $DB_PID"
