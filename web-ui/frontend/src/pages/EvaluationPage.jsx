@@ -27,6 +27,7 @@ import {
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import useStore from '../stores'
+import { getModelConfigs } from '../services/api'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -65,12 +66,21 @@ function EvaluationPage() {
     resetFormData,
   } = useStore()
   
+  const [modelConfigs, setModelConfigs] = useState([])
+  const [selectedModelConfig, setSelectedModelConfig] = useState(null)
+  
   const { startEvaluation } = useStore()
 
   useEffect(() => {
     fetchScoringFunctions()
     fetchDataFiles()
     fetchAvailableModels()
+    // 加载模型配置
+    getModelConfigs().then(res => {
+      setModelConfigs(res.configs || [])
+    }).catch(err => {
+      console.error('Failed to load model configs:', err)
+    })
   }, [])
 
   useEffect(() => {
@@ -81,26 +91,56 @@ function EvaluationPage() {
     try {
       setSubmitting(true)
       
+      // 从模型配置中获取API地址和参数
+      const modelConfig = modelConfigs.find(c => c.model_name === values.model)
+      if (!modelConfig) {
+        message.error('请选择有效的模型配置')
+        return
+      }
+      
       // 数据处理，确保数字类型正常
+      // 处理temperature和top_p，确保是有效数字
+      const getTemperature = () => {
+        if (values.temperature !== undefined && values.temperature !== null) {
+          const val = parseFloat(values.temperature)
+          if (!isNaN(val)) return val
+        }
+        if (modelConfig.temperature !== undefined && modelConfig.temperature !== null) {
+          return parseFloat(modelConfig.temperature)
+        }
+        return 0.0
+      }
+      
+      const getTopP = () => {
+        if (values.top_p !== undefined && values.top_p !== null) {
+          const val = parseFloat(values.top_p)
+          if (!isNaN(val)) return val
+        }
+        if (modelConfig.top_p !== undefined && modelConfig.top_p !== null) {
+          return parseFloat(modelConfig.top_p)
+        }
+        return 1.0
+      }
+      
       const config = {
         ...values,
-        // 处理 API URLs
-        api_urls: typeof values.api_urls === 'string' 
-          ? values.api_urls.split(',').map(url => url.trim()).filter(Boolean)
-          : Array.isArray(values.api_urls) ? values.api_urls : [],
+        // 从模型配置中获取API URLs
+        api_urls: modelConfig.api_urls || [],
+        // 从模型配置中获取API Key
+        api_key: modelConfig.api_key || 'sk-xxx',
         // 处理 model（为了匹配后端的 string 类型）
         model: Array.isArray(values.model) ? values.model[0] : values.model,
         // 确保数字字段为整数
         max_workers: parseInt(values.max_workers) || 4,
         badcase_threshold: parseFloat(values.badcase_threshold) || 1,
-        max_tokens: parseInt(values.max_tokens) || 8000,
-        timeout: parseInt(values.timeout) || 600,
-        sample_size: parseInt(values.sample_size) || 0,
-        checkpoint_interval: parseInt(values.checkpoint_interval) || 32,
-        // 确保布尔值正常
-        test_mode: Boolean(values.test_mode),
-        resume: Boolean(values.resume),
-        is_vllm: Boolean(values.is_vllm),
+        // 从模型配置中获取max_tokens和timeout，如果没有则使用表单值
+        max_tokens: parseInt(values.max_tokens) || modelConfig.max_tokens || 1024,
+        timeout: parseInt(values.timeout) || modelConfig.timeout || 10,
+        // 从模型配置中获取temperature和top_p，确保是有效数字
+        temperature: getTemperature(),
+        top_p: getTopP(),
+        // 默认使用vllm
+        is_vllm: true,
         // 使用后端默认值
         scoring_module: './function_register/plugin.py',
         report_format: 'json, txt, badcases',
@@ -115,6 +155,20 @@ function EvaluationPage() {
       message.error('启动评测失败: ' + (error.message || '未知错误'))
     } finally {
       setSubmitting(false)
+    }
+  }
+  
+  const handleModelChange = (modelName) => {
+    const config = modelConfigs.find(c => c.model_name === modelName)
+    if (config) {
+      setSelectedModelConfig(config)
+      // 自动填充模型配置的参数
+      form.setFieldsValue({
+        max_tokens: config.max_tokens || 1024,
+        timeout: config.timeout || 10,
+        temperature: config.temperature ?? 0.0,
+        top_p: config.top_p ?? 1.0,
+      })
     }
   }
 
@@ -154,49 +208,30 @@ function EvaluationPage() {
           <Row gutter={24}>
             <Col xs={24} lg={12}>
               <Form.Item
-                label={
-                  <Space>
-                    API 地址
-                    <Tooltip title="支持多个地址，用逗号分隔">
-                      <QuestionCircleOutlined />
-                    </Tooltip>
-                  </Space>
-                }
-                name="api_urls"
-                rules={[{ required: true, message: '请输入 API 地址' }]}
-              >
-                <TextArea
-                  placeholder="http://localhost:8000/v1&#10;多个地址用逗号或换行分隔"
-                  rows={3}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} lg={12}>
-              <Form.Item
-                label="API Key"
-                name="api_key"
-                rules={[{ required: true, message: '请输入 API Key' }]}
-              >
-                <Input.Password placeholder="sk-xxx" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={24}>
-            <Col xs={24} lg={12}>
-              <Form.Item
                 label="模型名称"
                 name="model"
-                rules={[{ required: true, message: '请输入或选择模型名称' }]}
+                rules={[{ required: true, message: '请选择模型名称' }]}
               >
-                <AutoComplete
-                  placeholder="选择或输入模型名称"
-                  options={availableModels.map(m => ({ value: m, label: m }))}
-                  filterOption={(inputValue, option) =>
-                    option.value.toLowerCase().indexOf(inputValue.toLowerCase()) !== -1
-                  }
-                  allowClear
-                />
+                <Select
+                  showSearch
+                  placeholder="选择模型"
+                  loading={loading}
+                  optionFilterProp="children"
+                  onChange={handleModelChange}
+                >
+                  {modelConfigs.map(config => (
+                    <Option key={config.model_name} value={config.model_name}>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>{config.model_name}</div>
+                        {config.description && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {config.description}
+                          </Text>
+                        )}
+                      </div>
+                    </Option>
+                  ))}
+                </Select>
               </Form.Item>
             </Col>
             <Col xs={24} lg={12}>
@@ -255,23 +290,72 @@ function EvaluationPage() {
                 </Select>
               </Form.Item>
             </Col>
+          </Row>
+
+          <Row gutter={24}>
             <Col xs={24} lg={12}>
               <Form.Item
                 label={
                   <Space>
-                    使用 vLLM 推理
-                    <Tooltip title="启用此功能将默认关闭本地模型的推理模式，改用 vLLM 加速推理">
+                    温度 (Temperature)
+                    <Tooltip title="控制输出的随机性，值越大输出越随机。范围：0.0-2.0">
                       <QuestionCircleOutlined />
                     </Tooltip>
                   </Space>
                 }
-                name="is_vllm"
-                valuePropName="checked"
+                name="temperature"
+                rules={[
+                  { required: false },
+                  { type: 'number', min: 0, max: 2, message: '温度值应在 0.0 到 2.0 之间' }
+                ]}
               >
-                <Switch />
+                <InputNumber
+                  min={0}
+                  max={2}
+                  step={0.1}
+                  precision={1}
+                  style={{ width: '100%' }}
+                  placeholder="从模型配置自动填充"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} lg={12}>
+              <Form.Item
+                label={
+                  <Space>
+                    Top P
+                    <Tooltip title="核采样参数，控制输出的多样性。范围：0.0-1.0">
+                      <QuestionCircleOutlined />
+                    </Tooltip>
+                  </Space>
+                }
+                name="top_p"
+                rules={[
+                  { required: false },
+                  { type: 'number', min: 0, max: 1, message: 'Top P 值应在 0.0 到 1.0 之间' }
+                ]}
+              >
+                <InputNumber
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  precision={2}
+                  style={{ width: '100%' }}
+                  placeholder="从模型配置自动填充"
+                />
               </Form.Item>
             </Col>
           </Row>
+          
+          {selectedModelConfig && (
+            <Alert
+              message={`已选择模型: ${selectedModelConfig.model_name}`}
+              description={`API地址: ${selectedModelConfig.api_urls.join(', ')} | 温度: ${selectedModelConfig.temperature} | Top P: ${selectedModelConfig.top_p} | Max Tokens: ${selectedModelConfig.max_tokens} | Timeout: ${selectedModelConfig.timeout}s`}
+              type="info"
+              showIcon
+              style={{ marginTop: 16 }}
+            />
+          )}
         </Card>
 
         {/* 高级配置 */}
@@ -313,7 +397,7 @@ function EvaluationPage() {
                       label="超时时间 (秒)"
                       name="timeout"
                     >
-                      <InputNumber min={10} max={3600} style={{ width: '100%' }} />
+                      <InputNumber min={1} max={3600} style={{ width: '100%' }} />
                     </Form.Item>
                   </Col>
                   <Col xs={24} lg={8}>
@@ -338,57 +422,6 @@ function EvaluationPage() {
                     </Form.Item>
                   </Col>
 
-                </Row>
-              ),
-            },
-            {
-              key: 'checkpoint',
-              label: '断点续测配置',
-              children: (
-                <Row gutter={24}>
-                  <Col xs={24} lg={12}>
-                    <Form.Item
-                      label="检查点文件路径"
-                      name="checkpoint_path"
-                    >
-                      <Input placeholder="./checkpoint/task.json" />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} lg={6}>
-                    <Form.Item
-                      label="检查点保存间隔"
-                      name="checkpoint_interval"
-                    >
-                      <InputNumber min={1} style={{ width: '100%' }} />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={24} lg={6}>
-                    <Form.Item
-                      label="从断点继续"
-                      name="resume"
-                      valuePropName="checked"
-                    >
-                      <Switch />
-                    </Form.Item>
-                  </Col>
-                </Row>
-              ),
-            },
-            {
-              key: 'debug',
-              label: '调试选项',
-              children: (
-                <Row gutter={24}>
-                  <Col xs={24} lg={8}>
-                    <Form.Item
-                      label="测试模式"
-                      name="test_mode"
-                      valuePropName="checked"
-                      tooltip="启用后不实际调用 API，用于测试流程"
-                    >
-                      <Switch />
-                    </Form.Item>
-                  </Col>
                 </Row>
               ),
             },

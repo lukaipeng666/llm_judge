@@ -12,12 +12,12 @@ import asyncio
 import subprocess
 import threading
 import shutil
-from collections import deque
-from datetime import datetime
+from collections import deque, defaultdict
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from urllib.parse import unquote, quote
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -86,6 +86,12 @@ async def validation_exception_handler(request, exc):
 running_processes: Dict[str, subprocess.Popen] = {}
 processes_lock = threading.Lock()
 
+# 自动注册限制：IP频率限制
+auto_register_rate_limit: Dict[str, List[datetime]] = defaultdict(list)
+rate_limit_lock = threading.Lock()
+RATE_LIMIT_WINDOW = timedelta(minutes=5)  # 5分钟窗口
+RATE_LIMIT_MAX_REQUESTS = 10  # 每个IP最多10次请求
+
 # 添加URL安全编码/解码辅助函数
 def url_safe_encode(value: str) -> str:
     """URL安全编码"""
@@ -130,6 +136,8 @@ class EvaluationConfig(BaseModel):
     max_tokens: int = 8000
     api_key: str = "sk-xxx"
     is_vllm: bool = False
+    temperature: Optional[float] = 0.0
+    top_p: Optional[float] = 1.0
 
 
 class TaskStatus(BaseModel):
@@ -223,6 +231,86 @@ async def login(credentials: UserLogin):
         "token_type": "bearer",
         "user": user
     }
+
+
+def check_rate_limit(client_ip: str) -> bool:
+    """检查IP频率限制"""
+    with rate_limit_lock:
+        now = datetime.now()
+        # 清理过期的请求记录
+        auto_register_rate_limit[client_ip] = [
+            req_time for req_time in auto_register_rate_limit[client_ip]
+            if now - req_time < RATE_LIMIT_WINDOW
+        ]
+        
+        # 检查是否超过限制
+        if len(auto_register_rate_limit[client_ip]) >= RATE_LIMIT_MAX_REQUESTS:
+            return False
+        
+        # 记录本次请求
+        auto_register_rate_limit[client_ip].append(now)
+        return True
+
+
+@app.post("/api/auth/auto-login", response_model=Token)
+async def auto_login(credentials: UserLogin, request: Request):
+    """
+    自动注册并登录
+    如果用户不存在，自动注册；如果存在，验证密码并登录
+    用于外部系统免密登录集成
+    
+    安全限制：
+    1. admin用户不能使用此接口自动登录
+    2. 自动注册有频率限制（每个IP 5分钟内最多10次）
+    """
+    # 禁止admin用户使用自动登录
+    if credentials.username.lower() == "admin":
+        raise HTTPException(
+            status_code=403, 
+            detail="Admin users cannot use auto-login. Please use the regular login endpoint."
+        )
+    
+    # 获取客户端IP
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # 先尝试验证用户（登录）
+    user = db.verify_user(credentials.username, credentials.password)
+    
+    if user:
+        # 用户存在且密码正确，直接登录
+        access_token = create_access_token(data={"user_id": user["id"], "username": user["username"]})
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": user
+        }
+    
+    # 用户不存在或密码错误，尝试注册
+    # 检查频率限制（仅对注册请求进行限制）
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many auto-register requests. Maximum {RATE_LIMIT_MAX_REQUESTS} requests per {RATE_LIMIT_WINDOW.seconds // 60} minutes."
+        )
+    
+    # 检查用户是否已存在（通过尝试创建用户）
+    user_id = db.create_user(credentials.username, credentials.password, None)
+    
+    if user_id:
+        # 注册成功，生成token
+        access_token = create_access_token(data={"user_id": user_id, "username": credentials.username})
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user_id,
+                "username": credentials.username,
+                "email": None
+            }
+        }
+    else:
+        # 用户已存在但密码错误
+        raise HTTPException(status_code=401, detail="Invalid username or password")
 
 
 @app.get("/api/auth/me")
@@ -442,11 +530,247 @@ async def upload_user_data(file: UploadFile = File(...), description: str = "",
 @app.put("/api/user/data/{data_id}")
 async def update_user_data_info(data_id: int, description: str, 
                                  current_user: Dict = Depends(get_current_user)):
-    """更新用户数据文件描述"""
+    """更新用户数据文件描述（保留用于兼容性，但不再使用）"""
     success = db.update_user_data(current_user["user_id"], data_id, description)
     if not success:
         raise HTTPException(status_code=404, detail="Data file not found or access denied")
     return {"message": "Data file updated successfully"}
+
+
+class DataEditRequest(BaseModel):
+    """数据编辑请求模型"""
+    edit_type: str  # "single" 或 "batch"
+    item_index: Optional[int] = None  # 单独编辑时的数据索引
+    field_type: str  # "meta_description" 或 "turn_text"
+    role: Optional[str] = None  # 编辑turn_text时的角色（human/assistant等）
+    turn_index: Optional[int] = None  # 编辑turn_text时的turn索引
+    new_value: str  # 新值
+
+
+class SingleItemEditRequest(BaseModel):
+    """单条数据完整编辑请求模型"""
+    item_index: int  # 数据索引
+    edited_item: Dict[str, Any]  # 编辑后的完整JSON对象
+
+
+class BatchDeleteItemsRequest(BaseModel):
+    """批量删除数据项请求模型"""
+    item_indices: List[int]  # 要删除的数据索引列表
+
+
+class AddItemRequest(BaseModel):
+    """添加单条数据请求模型"""
+    new_item: Dict[str, Any]  # 新数据项的完整JSON对象
+
+
+def validate_item_edit(original_item: Dict, edited_item: Dict) -> Tuple[bool, Optional[str]]:
+    """验证编辑后的JSON是否只修改了允许的字段"""
+    # 检查结构是否一致（不允许修改JSON结构）
+    original_keys = sorted(original_item.keys())
+    edited_keys = sorted(edited_item.keys())
+    if original_keys != edited_keys:
+        return False, '不允许修改JSON结构，只能修改meta_description和turns中的text字段'
+    
+    # 检查meta字段
+    if original_item.get("meta") and edited_item.get("meta"):
+        original_meta_keys = sorted(original_item["meta"].keys())
+        edited_meta_keys = sorted(edited_item["meta"].keys())
+        if original_meta_keys != edited_meta_keys:
+            return False, '不允许修改meta的结构，只能修改meta_description字段'
+    elif original_item.get("meta") != edited_item.get("meta"):
+        return False, '不允许修改meta的结构'
+    
+    # 检查turns字段
+    if original_item.get("turns") and edited_item.get("turns"):
+        if not isinstance(edited_item["turns"], list) or len(edited_item["turns"]) != len(original_item["turns"]):
+            return False, '不允许修改turns数组的长度或结构'
+        
+        for i, (orig_turn, edit_turn) in enumerate(zip(original_item["turns"], edited_item["turns"])):
+            # 检查turn的结构
+            orig_turn_keys = sorted(orig_turn.keys())
+            edit_turn_keys = sorted(edit_turn.keys())
+            if orig_turn_keys != edit_turn_keys:
+                return False, f'不允许修改turn {i + 1}的结构'
+            
+            # 检查role是否改变
+            if orig_turn.get("role") != edit_turn.get("role"):
+                return False, f'不允许修改turn {i + 1}的role字段'
+            
+            # text字段允许修改（不检查）
+    elif original_item.get("turns") != edited_item.get("turns"):
+        return False, '不允许修改turns的结构'
+    
+    # 检查其他字段是否改变
+    for key in original_keys:
+        if key in ["meta", "turns"]:
+            continue
+        if json.dumps(original_item[key], ensure_ascii=False, sort_keys=True) != json.dumps(edited_item[key], ensure_ascii=False, sort_keys=True):
+            return False, f'不允许修改字段: {key}'
+    
+    return True, None
+
+
+@app.put("/api/user/data/{data_id}/edit")
+async def edit_user_data_content(data_id: int, edit_request: DataEditRequest,
+                                 current_user: Dict = Depends(get_current_user)):
+    """编辑用户数据内容（单独或批量）"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            if not file_content:
+                raise HTTPException(status_code=404, detail="Data content not found")
+            
+            # 解析JSONL内容
+            data_items = []
+            for line in file_content.split("\n"):
+                line = line.strip()
+                if line:
+                    data_items.append(json.loads(line))
+            
+            # 执行编辑操作
+            if edit_request.edit_type == "single":
+                # 单独编辑
+                if edit_request.item_index is None or edit_request.item_index < 0 or edit_request.item_index >= len(data_items):
+                    raise HTTPException(status_code=400, detail="Invalid item index")
+                
+                item = data_items[edit_request.item_index]
+                
+                if edit_request.field_type == "meta_description":
+                    # 编辑meta_description
+                    if "meta" not in item:
+                        item["meta"] = {}
+                    item["meta"]["meta_description"] = edit_request.new_value
+                elif edit_request.field_type == "turn_text":
+                    # 编辑turn的text
+                    if "turns" not in item:
+                        raise HTTPException(status_code=400, detail="Item has no turns field")
+                    if edit_request.turn_index is None or edit_request.turn_index < 0 or edit_request.turn_index >= len(item["turns"]):
+                        raise HTTPException(status_code=400, detail="Invalid turn index")
+                    if edit_request.role and item["turns"][edit_request.turn_index].get("role") != edit_request.role:
+                        raise HTTPException(status_code=400, detail="Role mismatch")
+                    item["turns"][edit_request.turn_index]["text"] = edit_request.new_value
+                else:
+                    raise HTTPException(status_code=400, detail="Invalid field_type")
+                
+            elif edit_request.edit_type == "batch":
+                # 批量编辑
+                if edit_request.field_type == "meta_description":
+                    # 批量更新所有meta_description
+                    for item in data_items:
+                        if "meta" not in item:
+                            item["meta"] = {}
+                        item["meta"]["meta_description"] = edit_request.new_value
+                elif edit_request.field_type == "turn_text":
+                    # 批量更新指定角色的所有turn的text
+                    if not edit_request.role:
+                        raise HTTPException(status_code=400, detail="Role is required for batch edit turn_text")
+                    for item in data_items:
+                        if "turns" in item:
+                            for turn in item["turns"]:
+                                if turn.get("role") == edit_request.role:
+                                    turn["text"] = edit_request.new_value
+                else:
+                    raise HTTPException(status_code=400, detail="Invalid field_type")
+            else:
+                raise HTTPException(status_code=400, detail="Invalid edit_type")
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Data edited successfully",
+                "updated_count": len(data_items) if edit_request.edit_type == "batch" else 1
+            }
+            
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to edit data: {str(e)}")
+
+
+@app.put("/api/user/data/{data_id}/edit-item")
+async def edit_single_item_complete(data_id: int, edit_request: SingleItemEditRequest,
+                                    current_user: Dict = Depends(get_current_user)):
+    """编辑单条数据的完整内容（支持一次修改多个允许的字段）"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            if not file_content:
+                raise HTTPException(status_code=404, detail="Data content not found")
+            
+            # 解析JSONL内容
+            data_items = []
+            for line in file_content.split("\n"):
+                line = line.strip()
+                if line:
+                    data_items.append(json.loads(line))
+            
+            # 验证索引
+            if edit_request.item_index < 0 or edit_request.item_index >= len(data_items):
+                raise HTTPException(status_code=400, detail="Invalid item index")
+            
+            original_item = data_items[edit_request.item_index]
+            
+            # 验证编辑后的JSON
+            is_valid, error_msg = validate_item_edit(original_item, edit_request.edited_item)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            # 替换数据项
+            data_items[edit_request.item_index] = edit_request.edited_item
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Data edited successfully",
+                "updated_count": 1
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to edit data: {str(e)}")
 
 
 @app.delete("/api/user/data/{data_id}")
@@ -458,6 +782,286 @@ async def delete_user_data_file(data_id: int, current_user: Dict = Depends(get_c
         raise HTTPException(status_code=404, detail="Data file not found or access denied")
     
     return {"message": "Data file deleted successfully"}
+
+
+@app.delete("/api/user/data/{data_id}/items/{item_index}")
+async def delete_single_item(data_id: int, item_index: int, 
+                             current_user: Dict = Depends(get_current_user)):
+    """删除单条数据"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            if not file_content:
+                raise HTTPException(status_code=404, detail="Data content not found")
+            
+            # 解析JSONL内容
+            data_items = []
+            for line in file_content.split("\n"):
+                line = line.strip()
+                if line:
+                    data_items.append(json.loads(line))
+            
+            # 验证索引
+            if item_index < 0 or item_index >= len(data_items):
+                raise HTTPException(status_code=400, detail="Invalid item index")
+            
+            # 删除指定索引的数据项
+            data_items.pop(item_index)
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Item deleted successfully",
+                "deleted_count": 1
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to delete item: {str(e)}")
+
+
+@app.delete("/api/user/data/{data_id}/items")
+async def batch_delete_items(data_id: int, delete_request: BatchDeleteItemsRequest,
+                             current_user: Dict = Depends(get_current_user)):
+    """批量删除数据"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        if not delete_request.item_indices:
+            raise HTTPException(status_code=400, detail="No items to delete")
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            if not file_content:
+                raise HTTPException(status_code=404, detail="Data content not found")
+            
+            # 解析JSONL内容
+            data_items = []
+            for line in file_content.split("\n"):
+                line = line.strip()
+                if line:
+                    data_items.append(json.loads(line))
+            
+            # 验证索引并排序（从大到小删除，避免索引变化）
+            item_indices = sorted(set(delete_request.item_indices), reverse=True)
+            for idx in item_indices:
+                if idx < 0 or idx >= len(data_items):
+                    raise HTTPException(status_code=400, detail=f"Invalid item index: {idx}")
+            
+            # 删除指定索引的数据项（从后往前删除）
+            deleted_count = 0
+            for idx in item_indices:
+                data_items.pop(idx)
+                deleted_count += 1
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Items deleted successfully",
+                "deleted_count": deleted_count
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to delete items: {str(e)}")
+
+
+@app.post("/api/user/data/{data_id}/items")
+async def add_single_item(data_id: int, add_request: AddItemRequest,
+                          current_user: Dict = Depends(get_current_user)):
+    """添加单条数据"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 验证新数据项格式
+        if not isinstance(add_request.new_item, dict):
+            raise HTTPException(status_code=400, detail="Invalid item format")
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            
+            # 解析JSONL内容
+            data_items = []
+            if file_content:
+                for line in file_content.split("\n"):
+                    line = line.strip()
+                    if line:
+                        data_items.append(json.loads(line))
+            
+            # 添加新数据项到末尾
+            data_items.append(add_request.new_item)
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Item added successfully",
+                "added_count": 1,
+                "new_index": len(data_items) - 1
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to add item: {str(e)}")
+
+
+@app.post("/api/user/data/{data_id}/append")
+async def append_data_file(data_id: int, file: UploadFile = File(...),
+                           current_user: Dict = Depends(get_current_user)):
+    """导入并追加CSV或JSONL数据到现有数据后面"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 验证文件格式
+        if not file.filename.endswith(".jsonl") and not file.filename.endswith(".csv"):
+            raise HTTPException(status_code=400, detail="Only .jsonl and .csv files are supported")
+        
+        new_items = []
+        
+        if file.filename.endswith(".jsonl"):
+            # JSONL文件直接解析
+            content = await file.read()
+            file_content = content.decode('utf-8')
+            
+            # 解析JSONL内容
+            lines = file_content.strip().split('\n')
+            for line in lines:
+                line = line.strip()
+                if line:
+                    try:
+                        new_items.append(json.loads(line))
+                    except json.JSONDecodeError as e:
+                        raise HTTPException(status_code=400, detail=f"Invalid JSONL format: {str(e)}")
+        
+        elif file.filename.endswith(".csv"):
+            # CSV文件需要先转换为JSONL
+            from .csv_to_jsonl import convert_csv_to_jsonl_in_memory
+            
+            csv_content = (await file.read()).decode('utf-8-sig')
+            
+            # 转换CSV并验证
+            jsonl_data, validation_info = convert_csv_to_jsonl_in_memory(csv_content)
+            
+            # 检查转换是否成功
+            if validation_info["errors"]:
+                error_msg = "CSV转换失败: " + "; ".join(validation_info["errors"])
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            new_items = jsonl_data
+        
+        if not new_items:
+            raise HTTPException(status_code=400, detail="No valid data items found in file")
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            
+            # 解析现有JSONL内容
+            data_items = []
+            if file_content:
+                for line in file_content.split("\n"):
+                    line = line.strip()
+                    if line:
+                        data_items.append(json.loads(line))
+            
+            # 追加新数据项到末尾
+            data_items.extend(new_items)
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Data appended successfully",
+                "added_count": len(new_items),
+                "total_count": len(data_items)
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to append data: {str(e)}")
 
 
 @app.get("/api/data-files")
@@ -568,6 +1172,8 @@ async def start_evaluation(config: EvaluationConfig, background_tasks: Backgroun
             "--timeout", str(config.timeout),
             "--max-tokens", str(config.max_tokens),
             "--api_key", config.api_key,
+            "--temperature", str(config.temperature if config.temperature is not None else 0.0),
+            "--top-p", str(config.top_p if config.top_p is not None else 1.0),
             "--output_json",
             "--user_id", str(current_user["user_id"]),
             "--task_id", task_id,
@@ -827,6 +1433,102 @@ async def admin_delete_user_data(user_id: int, data_id: int, current_user: Dict 
     if not success:
         raise HTTPException(status_code=404, detail="Data file not found")
     return {"message": "Data file deleted successfully"}
+
+
+# ==================== 管理员模型配置接口 ====================
+
+@app.get("/api/admin/model-configs")
+async def admin_get_model_configs(current_user: Dict = Depends(get_current_admin_user)):
+    """管理员获取所有模型配置"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get("/api/model-configs", params={"include_inactive": "true"})
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as e:
+        print(f"[ERROR] Database service returned {e.response.status_code}: {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        print(f"[ERROR] Failed to get model configs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get model configs: {str(e)}")
+
+
+@app.post("/api/admin/model-configs")
+async def admin_create_model_config(config: Dict[str, Any], current_user: Dict = Depends(get_current_admin_user)):
+    """管理员创建模型配置"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.post("/api/model-configs", json=config)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/admin/model-configs/{config_id}")
+async def admin_update_model_config(config_id: int, updates: Dict[str, Any], current_user: Dict = Depends(get_current_admin_user)):
+    """管理员更新模型配置"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.put(f"/api/model-configs/{config_id}", json=updates)
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/admin/model-configs/{config_id}")
+async def admin_delete_model_config(config_id: int, current_user: Dict = Depends(get_current_admin_user)):
+    """管理员删除模型配置"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.delete(f"/api/model-configs/{config_id}")
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/model-configs")
+async def get_available_model_configs(current_user: Dict = Depends(get_current_user)):
+    """获取所有可用的模型配置（普通用户）"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get("/api/model-configs", params={"include_inactive": False})
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

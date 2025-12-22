@@ -60,7 +60,7 @@ def evaluate_toolbench(messages: list, model_output: str, reference_output: str)
     
     # 初始化评分和标志
     score = 0.0
-    is_badcase = 1
+    is_badcase = 0
     assessment_parts = []
     
     # 1. 格式评估：检查是否包含必要的三个部分
@@ -835,6 +835,39 @@ def evaluate_reject_function(messages: list, model_output: str, reference_output
         scores["is_badcase"] = 1
     return scores
 
+def _extract_json_from_text(text: str) -> str:
+    """
+    从文本中提取 JSON 内容，支持多种格式：
+    1. ```json 代码块
+    2. ``` 代码块（无语言标记）
+    3. 纯 JSON 字符串
+    """
+    if not text:
+        return text
+    
+    # 尝试匹配 ```json 代码块
+    json_pattern = r'```json\s*(.*?)\s*```'
+    match = re.search(json_pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    
+    # 尝试匹配 ``` 代码块（无语言标记）
+    code_block_pattern = r'```\s*(.*?)\s*```'
+    match = re.search(code_block_pattern, text, re.DOTALL)
+    if match:
+        content = match.group(1).strip()
+        # 检查内容是否以 { 或 [ 开头（可能是 JSON）
+        if content.startswith(('{', '[')):
+            return content
+    
+    # 尝试直接解析为 JSON（纯 JSON 字符串）
+    text_stripped = text.strip()
+    if text_stripped.startswith(('{', '[')):
+        return text_stripped
+    
+    # 如果都不匹配，返回原文本
+    return text
+
 @register_scoring_function('json_check')
 def evaluate_COLDataset(messages: list, model_output: str, reference_output: str) -> Dict[str, Any]:
     scores = {
@@ -843,36 +876,38 @@ def evaluate_COLDataset(messages: list, model_output: str, reference_output: str
         "details": {},
     }
     try:
-        json_pattern = r'```json\s*(.*?)\s*```'
-        json_match_model_output = re.search(json_pattern, model_output, re.DOTALL)
+        # 从 model_output 中提取 JSON
+        extracted_model_json = _extract_json_from_text(model_output)
+        
+        # 从 reference_output 中提取 JSON
+        extracted_reference_json = _extract_json_from_text(reference_output)
+        
+        # 解析 JSON
+        json_match_reference_output = json.loads(extracted_reference_json)
+        json_match_model_output = json.loads(extracted_model_json)
 
-        if "```json" in reference_output:
-            reference_output = re.search(json_pattern, reference_output, re.DOTALL)
-            if reference_output:
-                reference_output = reference_output.group(1)
-
-        json_match_reference_output = json.loads(reference_output)
-
-        if json_match_model_output and isinstance(json_match_reference_output, dict):
-            json_match_model_output = json_match_model_output.group(1)
-            json_match_model_output = json.loads(json_match_model_output)
-            if isinstance(json_match_model_output, dict):
-                for key in json_match_reference_output:
-                    if key in json_match_model_output and str(json_match_model_output[key]).lower() == str(json_match_reference_output[key]).lower():
-                        scores["score"] += 1
-                if scores["score"] < len(json_match_reference_output):
-                    scores["is_badcase"] = 1
-                    scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)
-                scores["score"] = scores["score"] / len(json_match_reference_output)
-            else:
+        if isinstance(json_match_reference_output, dict) and isinstance(json_match_model_output, dict):
+            for key in json_match_reference_output:
+                if key in json_match_model_output and str(json_match_model_output[key]).lower() == str(json_match_reference_output[key]).lower():
+                    scores["score"] += 1
+            if scores["score"] < len(json_match_reference_output):
                 scores["is_badcase"] = 1
                 scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)
+            scores["score"] = scores["score"] / len(json_match_reference_output)
         else:
             scores["is_badcase"] = 1
             scores['details']["json_content"] = json.dumps(json_match_model_output, ensure_ascii=False)
+            scores['details']["error"] = "JSON 格式不正确：期望字典类型"
     except json.JSONDecodeError as e:
         scores["is_badcase"] = 1
         scores['details']["error"] = str(e)
+        scores['details']["model_output"] = model_output
+        scores['details']["reference_output"] = reference_output
+    except Exception as e:
+        scores["is_badcase"] = 1
+        scores['details']["error"] = f"解析错误: {str(e)}"
+        scores['details']["model_output"] = model_output
+        scores['details']["reference_output"] = reference_output
 
     return scores
 
@@ -901,36 +936,147 @@ def evaluate_list(messages: list, model_output: str, reference_output: str) -> D
         "is_badcase": 0,
         "details": {},
     }
+    
     try:
-        json_pattern = r'<solution>\s*(.*?)\s*</solution>'
-        json_match_model_output = re.search(json_pattern, model_output, re.DOTALL)
-
-        json_match_reference_output = json.loads(reference_output)
-        json_match_reference_output = json_match_reference_output["answer"]
-
-        if json_match_model_output:
-            json_match_model_output = json_match_model_output.group(1)
-            scores["details"]["model_answer"] = json_match_model_output
-            json_match_model_output = json_match_model_output.split(",")
-            json_match_model_output = [j.strip() for j in json_match_model_output]
-
-            json_match_reference_output = json_match_reference_output.split(",")
-            json_match_reference_output = [j.strip().lower() for j in json_match_reference_output]
-
-            if len(json_match_reference_output) != len(json_match_model_output):
-                return scores
+        # 先从 model_output 和 reference_output 中提取 JSON（去除外层 ```json 等包装）
+        extracted_model_output = _extract_json_from_text(model_output)
+        extracted_reference_output = _extract_json_from_text(reference_output)
+        
+        # 尝试从提取后的 model_output 中提取答案，支持多种格式
+        model_answer = None
+        
+        # 格式1: <solution>...</solution>
+        pattern1 = r'<solution>\s*(.*?)\s*</solution>'
+        match1 = re.search(pattern1, extracted_model_output, re.DOTALL)
+        if match1:
+            model_answer = match1.group(1).strip()
+        
+        # 格式2: [答案]...</答案> 或 [答案]...
+        if not model_answer:
+            # 匹配 [答案]... 或 [答案]...</答案>
+            pattern2 = r'\[答案\]\s*(.*?)(?:\[/答案\]|$)'
+            match2 = re.search(pattern2, extracted_model_output, re.DOTALL)
+            if match2:
+                model_answer = match2.group(1).strip()
+        
+        # 格式3: 尝试直接解析为 JSON（如果整个输出是 JSON）
+        if not model_answer:
+            try:
+                parsed = json.loads(extracted_model_output.strip())
+                if isinstance(parsed, dict) and "answer" in parsed:
+                    model_answer = parsed["answer"]
+                elif isinstance(parsed, str):
+                    model_answer = parsed
+            except:
+                pass
+        
+        # 如果仍然没有提取到答案，尝试从整个输出中提取（作为最后的手段）
+        if not model_answer:
+            # 尝试查找类似列表格式的内容
+            model_answer = extracted_model_output.strip()
+        
+        # 如果还是没有答案或为空，标记为错误
+        if not model_answer or not model_answer.strip():
+            scores["is_badcase"] = 1
+            scores["score"] = 0
+            scores["details"]["error"] = "无法从模型输出中提取答案或答案为空"
+            return scores
+        
+        scores["details"]["model_answer"] = model_answer
+        
+        # 尝试解析 model_answer 是否为 JSON 字符串
+        model_parsed = None
+        try:
+            # 如果 model_answer 是 JSON 字符串，先解析
+            if model_answer.strip().startswith('[') or model_answer.strip().startswith('{'):
+                model_parsed = json.loads(model_answer)
+        except:
+            pass
+        
+        # 解析 reference_output（使用提取后的版本）
+        reference_answer = None
+        try:
+            ref_data = json.loads(extracted_reference_output)
+            if isinstance(ref_data, dict) and "answer" in ref_data:
+                reference_answer = ref_data["answer"]
+            elif isinstance(ref_data, (list, dict, str)):
+                # 支持 list、dict、str 类型
+                reference_answer = ref_data
             else:
-                for i in range(len(json_match_reference_output)):
-                    if str(json_match_model_output[i]).lower() in json_match_reference_output:
-                        scores["is_badcase"] = 1
-                        scores["score"] = 0
-                        return scores
-                    else:
-                        scores["score"] += 1
-
-    except json.JSONDecodeError as e:
+                scores["is_badcase"] = 1
+                scores["score"] = 0
+                scores["details"]["error"] = f"参考输出格式不正确: 类型={type(ref_data)}"
+                return scores
+        except json.JSONDecodeError:
+            # 如果不是 JSON，直接使用字符串
+            reference_answer = extracted_reference_output
+        
+        # 如果两者都是 JSON 格式，直接比较 JSON 内容
+        if model_parsed is not None and isinstance(reference_answer, (list, dict)):
+            try:
+                # 标准化比较：转换为 JSON 字符串后比较
+                model_json_str = json.dumps(model_parsed, sort_keys=True, ensure_ascii=False)
+                ref_json_str = json.dumps(reference_answer, sort_keys=True, ensure_ascii=False)
+                if model_json_str == ref_json_str:
+                    scores["score"] = 1.0
+                else:
+                    scores["is_badcase"] = 1
+                    scores["score"] = 0
+                    scores["details"]["error"] = f"JSON 内容不匹配"
+                return scores
+            except Exception as e:
+                scores["is_badcase"] = 1
+                scores["score"] = 0
+                scores["details"]["error"] = f"比较 JSON 时出错: {str(e)}"
+                return scores
+        
+        # 如果不是 JSON 格式，使用原来的逗号分割方式
+        # 将 reference_answer 转换为字符串
+        if reference_answer is None:
+            reference_answer = extracted_reference_output
+        if isinstance(reference_answer, (list, dict)):
+            reference_answer = json.dumps(reference_answer, ensure_ascii=False)
+        
+        # 将答案分割为列表
+        try:
+            model_list = [item.strip() for item in str(model_answer).split(",") if item.strip()]
+            reference_list = [item.strip().lower() for item in str(reference_answer).split(",") if item.strip()]
+        except Exception as e:
+            scores["is_badcase"] = 1
+            scores["score"] = 0
+            scores["details"]["error"] = f"分割答案时出错: {str(e)}"
+            return scores
+        
+        # 检查长度是否一致
+        if len(reference_list) != len(model_list):
+            scores["is_badcase"] = 1
+            scores["score"] = 0
+            scores["details"]["error"] = f"答案长度不匹配: 参考答案长度={len(reference_list)}, 模型答案长度={len(model_list)}"
+            return scores
+        
+        # 逐项比较：检查模型答案中的每一项是否在参考答案中（顺序无关）
+        # 但需要确保每个位置都匹配
+        for i in range(len(reference_list)):
+            model_item = str(model_list[i]).lower().strip()
+            ref_item = reference_list[i].strip()
+            
+            # 检查是否匹配（允许顺序不同，但每个位置应该对应）
+            if model_item != ref_item:
+                # 如果当前位置不匹配，检查是否在参考列表的其他位置
+                if model_item not in reference_list:
+                    scores["is_badcase"] = 1
+                    scores["score"] = 0
+                    scores["details"]["error"] = f"第{i+1}项不匹配: 模型答案='{model_list[i]}', 参考答案='{reference_list[i]}'"
+                    return scores
+        
+        # 所有项都匹配
+        scores["score"] = 1.0
+        
+    except Exception as e:
+        # 捕获所有异常，标记为错误
         scores["is_badcase"] = 1
-        scores['details']["error"] = str(e)
+        scores["score"] = 0
+        scores["details"]["error"] = f"处理过程中出错: {str(e)}"
     
     return scores
 
@@ -1092,7 +1238,7 @@ def evalutate_box(messages: list, model_output: str, reference_output: str) -> D
     reference_value = extract_boxed_value(reference_output)
     scores = {
         'score': 0.0,
-        'is_badcase': 1,
+        'is_badcase': 0,
         'details': {}
     }
     if model_value and reference_value:
@@ -1117,7 +1263,7 @@ def evaluate_rouge(messages: list, model_output: str, reference_output: str) -> 
     # 初始化评分结果
     scores = {
         'score': 0.0,
-        'is_badcase': 1,  # 默认标记为badcase
+        'is_badcase': 0,  # 默认标记为badcase
         'details': {}
     }
     

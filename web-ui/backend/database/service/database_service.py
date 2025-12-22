@@ -38,6 +38,7 @@ db.create_user_data = db_module.create_user_data
 db.get_user_data_list = db_module.get_user_data_list
 db.get_user_data_by_id = db_module.get_user_data_by_id
 db.update_user_data = db_module.update_user_data
+db.update_user_data_content = db_module.update_user_data_content
 db.delete_user_data = db_module.delete_user_data
 db.create_user_task = db_module.create_user_task
 db.update_user_task = db_module.update_user_task
@@ -56,6 +57,13 @@ db.get_all_users = db_module.get_all_users
 db.delete_user = db_module.delete_user
 db.get_all_data_global = db_module.get_all_data_global
 db.get_all_tasks_global = db_module.get_all_tasks_global
+# 模型配置相关
+db.create_model_config = db_module.create_model_config
+db.get_all_model_configs = db_module.get_all_model_configs
+db.get_model_config_by_name = db_module.get_model_config_by_name
+db.get_model_config_by_id = db_module.get_model_config_by_id
+db.update_model_config = db_module.update_model_config
+db.delete_model_config = db_module.delete_model_config
 
 app = FastAPI(title="LLM Judge Database Service", version="1.0.0")
 
@@ -104,6 +112,27 @@ class UserReportCreate(BaseModel):
     report_content: str
     timestamp: str
     summary: Dict[str, Any]
+
+class ModelConfigCreate(BaseModel):
+    model_name: str
+    api_urls: List[str]
+    api_key: Optional[str] = None
+    temperature: float = 0.0
+    top_p: float = 1.0
+    max_tokens: int = 1024
+    timeout: int = 10
+    description: str = ""
+
+class ModelConfigUpdate(BaseModel):
+    model_name: Optional[str] = None
+    api_urls: Optional[List[str]] = None
+    api_key: Optional[str] = None
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    max_tokens: Optional[int] = None
+    timeout: Optional[int] = None
+    description: Optional[str] = None
+    is_active: Optional[int] = None
 
 
 # ==================== 用户相关API ====================
@@ -183,11 +212,24 @@ def get_user_data(user_id: int, data_id: int):
 
 @app.put("/api/user-data/{user_id}/{data_id}")
 def update_user_data(user_id: int, data_id: int, updates: UserDataUpdate):
-    """更新用户数据"""
+    """更新用户数据描述"""
     success = db.update_user_data(user_id, data_id, updates.description)
     if not success:
         raise HTTPException(status_code=404, detail="Data not found or update failed")
     return {"message": "Data updated successfully"}
+
+
+class UserDataContentUpdate(BaseModel):
+    file_content: str
+
+
+@app.put("/api/user-data/{user_id}/{data_id}/content")
+def update_user_data_content(user_id: int, data_id: int, updates: UserDataContentUpdate):
+    """更新用户数据文件内容"""
+    success = db.update_user_data_content(user_id, data_id, updates.file_content)
+    if not success:
+        raise HTTPException(status_code=404, detail="Data not found or update failed")
+    return {"message": "Data content updated successfully"}
 
 
 @app.delete("/api/user-data/{user_id}/{data_id}")
@@ -304,6 +346,75 @@ def delete_user_report(user_id: int, report_id: int):
     return {"message": "Report deleted successfully"}
 
 
+# ==================== 模型配置相关API ====================
+
+@app.post("/api/model-configs")
+def create_model_config(config: ModelConfigCreate):
+    """创建模型配置"""
+    config_id = db.create_model_config(
+        model_name=config.model_name,
+        api_urls=config.api_urls,
+        api_key=config.api_key,
+        temperature=config.temperature,
+        top_p=config.top_p,
+        max_tokens=config.max_tokens,
+        timeout=config.timeout,
+        description=config.description
+    )
+    return {"config_id": config_id, "message": "Model config created successfully"}
+
+
+@app.get("/api/model-configs")
+def get_all_model_configs(include_inactive: Optional[bool] = False):
+    """获取所有模型配置"""
+    # 处理查询参数，支持字符串 "true"/"false" 或布尔值
+    if isinstance(include_inactive, str):
+        include_inactive = include_inactive.lower() == "true"
+    configs = db.get_all_model_configs(include_inactive=bool(include_inactive))
+    return {"configs": configs}
+
+
+@app.get("/api/model-configs/by-name/{model_name}")
+def get_model_config_by_name(model_name: str):
+    """根据模型名称获取模型配置"""
+    config = db.get_model_config_by_name(model_name)
+    if config is None:
+        raise HTTPException(status_code=404, detail="Model config not found")
+    return config
+
+
+@app.get("/api/model-configs/{config_id}")
+def get_model_config(config_id: int):
+    """根据ID获取模型配置"""
+    config = db.get_model_config_by_id(config_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail="Model config not found")
+    return config
+
+
+@app.put("/api/model-configs/{config_id}")
+def update_model_config(config_id: int, updates: ModelConfigUpdate):
+    """更新模型配置"""
+    # 将Pydantic模型转换为字典，只包含非None的字段
+    update_dict = {k: v for k, v in updates.dict().items() if v is not None}
+    if not update_dict:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    
+    success = db.update_model_config(config_id, update_dict)
+    if not success:
+        raise HTTPException(status_code=404, detail="Model config not found or update failed")
+    return {"message": "Model config updated successfully"}
+
+
+@app.delete("/api/model-configs/{config_id}")
+def delete_model_config(config_id: int):
+    """删除模型配置"""
+    success = db.delete_model_config(config_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Model config not found or delete failed")
+    return {"message": "Model config deleted successfully"}
+
+
 # ==================== 健康检查 ====================
 
 @app.get("/health")
@@ -311,6 +422,14 @@ def health_check():
     """健康检查"""
     return {"status": "healthy", "service": "database"}
 
+
+# 确保数据库在服务启动时初始化
+@app.on_event("startup")
+async def startup_event():
+    """服务启动时确保数据库已初始化"""
+    # database.py 模块导入时会自动调用 init_database()
+    # 这里只是确保初始化完成
+    print("[INFO] Database service started, tables initialized")
 
 if __name__ == "__main__":
     # 读取配置文件

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Layout, Menu, Typography, Table, Button, Tag, Card, Modal, message, Space, Tabs, Descriptions, Popconfirm, Avatar } from 'antd'
+import { Layout, Menu, Typography, Table, Button, Tag, Card, Modal, message, Space, Tabs, Descriptions, Popconfirm, Avatar, Dropdown, Form, Input, InputNumber, Switch } from 'antd'
 import {
     UserOutlined,
     AppstoreOutlined,
@@ -9,7 +9,10 @@ import {
     ReloadOutlined,
     LogoutOutlined,
     RocketOutlined,
-    DatabaseOutlined
+    DatabaseOutlined,
+    SettingOutlined,
+    PlusOutlined,
+    EditOutlined
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -18,7 +21,11 @@ import {
     getAdminTasks,
     terminateAdminTask,
     getAdminData,
-    deleteAdminData
+    deleteAdminData,
+    getAdminModelConfigs,
+    createAdminModelConfig,
+    updateAdminModelConfig,
+    deleteAdminModelConfig
 } from '../services/api'
 import useStore from '../stores'
 import dayjs from 'dayjs'
@@ -36,6 +43,12 @@ export default function AdminDashboard() {
     const [users, setUsers] = useState([])
     const [tasks, setTasks] = useState([])
     const [dataFiles, setDataFiles] = useState([])
+    const [modelConfigs, setModelConfigs] = useState([])
+    
+    // Model config modal state
+    const [modelConfigModalVisible, setModelConfigModalVisible] = useState(false)
+    const [editingConfig, setEditingConfig] = useState(null)
+    const [modelConfigForm] = Form.useForm()
 
     // Fetch data functions
     const fetchUsers = async () => {
@@ -74,10 +87,23 @@ export default function AdminDashboard() {
         }
     }
 
+    const fetchModelConfigs = async () => {
+        setLoading(true)
+        try {
+            const res = await getAdminModelConfigs()
+            setModelConfigs(res.configs || [])
+        } catch (err) {
+            message.error('Failed to load model configs: ' + err.message)
+        } finally {
+            setLoading(false)
+        }
+    }
+
     useEffect(() => {
         if (activeTab === 'users') fetchUsers()
         if (activeTab === 'tasks') fetchTasks()
         if (activeTab === 'data') fetchDataFiles()
+        if (activeTab === 'models') fetchModelConfigs()
     }, [activeTab])
 
     // Actions
@@ -111,10 +137,79 @@ export default function AdminDashboard() {
         }
     }
 
+    const handleOpenModelConfigModal = (config = null) => {
+        setEditingConfig(config)
+        if (config) {
+            modelConfigForm.setFieldsValue({
+                ...config,
+                api_urls: config.api_urls.join('\n')
+            })
+        } else {
+            modelConfigForm.resetFields()
+        }
+        setModelConfigModalVisible(true)
+    }
+
+    const handleSaveModelConfig = async () => {
+        try {
+            const values = await modelConfigForm.validateFields()
+            const configData = {
+                ...values,
+                api_urls: values.api_urls.split('\n').map(url => url.trim()).filter(Boolean),
+                is_active: values.is_active ? 1 : 0
+            }
+            
+            if (editingConfig) {
+                await updateAdminModelConfig(editingConfig.id, configData)
+                message.success('Model config updated successfully')
+            } else {
+                await createAdminModelConfig(configData)
+                message.success('Model config created successfully')
+            }
+            setModelConfigModalVisible(false)
+            modelConfigForm.resetFields()
+            fetchModelConfigs()
+        } catch (err) {
+            if (err.errorFields) {
+                // Form validation error
+                return
+            }
+            message.error('Save failed: ' + err.message)
+        }
+    }
+
+    const handleDeleteModelConfig = async (configId) => {
+        try {
+            await deleteAdminModelConfig(configId)
+            message.success('Model config deleted successfully')
+            fetchModelConfigs()
+        } catch (err) {
+            message.error('Delete failed: ' + err.message)
+        }
+    }
+
     const handleLogout = () => {
         logout()
         navigate('/login')
     }
+
+    // 用户菜单项（和普通用户界面保持一致）
+    const userMenuItems = [
+        {
+            key: 'username',
+            label: <span style={{ fontWeight: '500' }}>{user?.username || '管理员'}</span>,
+            disabled: true,
+        },
+        {
+            type: 'divider',
+        },
+        {
+            key: 'logout',
+            icon: <LogoutOutlined />,
+            label: '退出登录',
+            onClick: handleLogout,
+        },
+    ]
 
     // Columns Definitions
     const userColumns = [
@@ -275,6 +370,94 @@ export default function AdminDashboard() {
         },
     ]
 
+    const modelConfigColumns = [
+        {
+            title: 'ID',
+            dataIndex: 'id',
+            key: 'id',
+            width: 70,
+        },
+        {
+            title: 'Model Name',
+            dataIndex: 'model_name',
+            key: 'model_name',
+            render: (text) => <Text strong>{text}</Text>
+        },
+        {
+            title: 'API URLs',
+            dataIndex: 'api_urls',
+            key: 'api_urls',
+            render: (urls) => (
+                <div>
+                    {Array.isArray(urls) ? urls.map((url, idx) => (
+                        <Tag key={idx} style={{ marginBottom: 4 }}>{url}</Tag>
+                    )) : <Tag>{urls}</Tag>}
+                </div>
+            )
+        },
+        {
+            title: 'Temperature',
+            dataIndex: 'temperature',
+            key: 'temperature',
+            width: 100,
+        },
+        {
+            title: 'Top P',
+            dataIndex: 'top_p',
+            key: 'top_p',
+            width: 80,
+        },
+        {
+            title: 'Max Tokens',
+            dataIndex: 'max_tokens',
+            key: 'max_tokens',
+            width: 100,
+        },
+        {
+            title: 'Timeout',
+            dataIndex: 'timeout',
+            key: 'timeout',
+            width: 80,
+            render: (val) => `${val}s`
+        },
+        {
+            title: 'Status',
+            dataIndex: 'is_active',
+            key: 'is_active',
+            width: 80,
+            render: (active) => (
+                <Tag color={active ? 'success' : 'default'}>
+                    {active ? 'Active' : 'Inactive'}
+                </Tag>
+            )
+        },
+        {
+            title: 'Action',
+            key: 'action',
+            width: 150,
+            render: (_, record) => (
+                <Space>
+                    <Button 
+                        icon={<EditOutlined />} 
+                        size="small" 
+                        onClick={() => handleOpenModelConfigModal(record)}
+                    >
+                        Edit
+                    </Button>
+                    <Popconfirm
+                        title="Delete Model Config"
+                        description="Are you sure to delete this model config?"
+                        onConfirm={() => handleDeleteModelConfig(record.id)}
+                        okText="Yes"
+                        cancelText="No"
+                    >
+                        <Button danger icon={<DeleteOutlined />} size="small">Delete</Button>
+                    </Popconfirm>
+                </Space>
+            ),
+        },
+    ]
+
     // Styles simulating Apple UI
     const glassStyle = {
         background: 'rgba(255, 255, 255, 0.7)',
@@ -331,6 +514,11 @@ export default function AdminDashboard() {
                             icon: <DatabaseOutlined />,
                             label: 'Data Manager',
                         },
+                        {
+                            key: 'models',
+                            icon: <SettingOutlined />,
+                            label: 'Model Configuration',
+                        },
                     ]}
                 />
                 <div style={{ position: 'absolute', bottom: 20, width: '100%', padding: '0 20px' }}>
@@ -352,10 +540,16 @@ export default function AdminDashboard() {
                         {activeTab === 'users' && 'User Management'}
                         {activeTab === 'tasks' && 'Global Task Monitor'}
                         {activeTab === 'data' && 'All User Data'}
+                        {activeTab === 'models' && 'Model Configuration'}
                     </Title>
                     <Space>
                         <Tag color="#108ee9">Admin Mode</Tag>
-                        <Avatar style={{ backgroundColor: '#007AFF' }} icon={<UserOutlined />} />
+                        <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+                            <Space style={{ cursor: 'pointer', padding: '4px 8px', borderRadius: '20px', transition: 'background 0.3s' }} className="hover-bg">
+                                <Avatar style={{ backgroundColor: '#007AFF' }} icon={<UserOutlined />} />
+                                <span style={{ color: '#1D1D1F', fontWeight: 500 }}>{user?.username || '管理员'}</span>
+                            </Space>
+                        </Dropdown>
                     </Space>
                 </Header>
 
@@ -365,24 +559,36 @@ export default function AdminDashboard() {
                             <div style={{ padding: '16px 24px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between' }}>
                                 <Space>
                                     <Text strong>{activeTab.toUpperCase()}</Text>
-                                    <Tag>{activeTab === 'users' ? users.length : (activeTab === 'tasks' ? tasks.length : dataFiles.length)} Total</Tag>
+                                    <Tag>{activeTab === 'users' ? users.length : (activeTab === 'tasks' ? tasks.length : (activeTab === 'data' ? dataFiles.length : modelConfigs.length))} Total</Tag>
                                 </Space>
-                                <Button
-                                    icon={<ReloadOutlined />}
-                                    onClick={() => {
-                                        if (activeTab === 'users') fetchUsers()
-                                        if (activeTab === 'tasks') fetchTasks()
-                                        if (activeTab === 'data') fetchDataFiles()
-                                    }}
-                                    loading={loading}
-                                >
-                                    Refresh
-                                </Button>
+                                <Space>
+                                    {activeTab === 'models' && (
+                                        <Button
+                                            type="primary"
+                                            icon={<PlusOutlined />}
+                                            onClick={() => handleOpenModelConfigModal()}
+                                        >
+                                            Add Model Config
+                                        </Button>
+                                    )}
+                                    <Button
+                                        icon={<ReloadOutlined />}
+                                        onClick={() => {
+                                            if (activeTab === 'users') fetchUsers()
+                                            if (activeTab === 'tasks') fetchTasks()
+                                            if (activeTab === 'data') fetchDataFiles()
+                                            if (activeTab === 'models') fetchModelConfigs()
+                                        }}
+                                        loading={loading}
+                                    >
+                                        Refresh
+                                    </Button>
+                                </Space>
                             </div>
 
                             <Table
-                                dataSource={activeTab === 'users' ? users : (activeTab === 'tasks' ? tasks : dataFiles)}
-                                columns={activeTab === 'users' ? userColumns : (activeTab === 'tasks' ? taskColumns : dataColumns)}
+                                dataSource={activeTab === 'users' ? users : (activeTab === 'tasks' ? tasks : (activeTab === 'data' ? dataFiles : modelConfigs))}
+                                columns={activeTab === 'users' ? userColumns : (activeTab === 'tasks' ? taskColumns : (activeTab === 'data' ? dataColumns : modelConfigColumns))}
                                 rowKey="id"
                                 loading={loading}
                                 pagination={{ pageSize: 10 }}
@@ -391,6 +597,98 @@ export default function AdminDashboard() {
                     </div>
                 </Content>
             </Layout>
+
+            {/* Model Config Modal */}
+            <Modal
+                title={editingConfig ? 'Edit Model Config' : 'Add Model Config'}
+                open={modelConfigModalVisible}
+                onOk={handleSaveModelConfig}
+                onCancel={() => {
+                    setModelConfigModalVisible(false)
+                    modelConfigForm.resetFields()
+                    setEditingConfig(null)
+                }}
+                width={700}
+                okText="Save"
+                cancelText="Cancel"
+            >
+                <Form
+                    form={modelConfigForm}
+                    layout="vertical"
+                    initialValues={{
+                        temperature: 0.0,
+                        top_p: 1.0,
+                        max_tokens: 1024,
+                        timeout: 10,
+                        is_active: true
+                    }}
+                >
+                    <Form.Item
+                        name="model_name"
+                        label="Model Name"
+                        rules={[{ required: true, message: 'Please input model name' }]}
+                    >
+                        <Input placeholder="e.g., Qwen/Qwen-1.8B-Chat" disabled={!!editingConfig} />
+                    </Form.Item>
+                    <Form.Item
+                        name="api_urls"
+                        label="API URLs (one per line)"
+                        rules={[{ required: true, message: 'Please input API URLs' }]}
+                    >
+                        <Input.TextArea 
+                            rows={3} 
+                            placeholder="http://localhost:8000/v1&#10;http://localhost:8001/v1"
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        name="api_key"
+                        label="API Key (Optional)"
+                    >
+                        <Input.Password placeholder="sk-xxx" />
+                    </Form.Item>
+                    <Form.Item
+                        name="temperature"
+                        label="Temperature"
+                        rules={[{ required: true }]}
+                    >
+                        <InputNumber min={0} max={2} step={0.1} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                        name="top_p"
+                        label="Top P"
+                        rules={[{ required: true }]}
+                    >
+                        <InputNumber min={0} max={1} step={0.1} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                        name="max_tokens"
+                        label="Max Tokens"
+                        rules={[{ required: true }]}
+                    >
+                        <InputNumber min={1} max={65536} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                        name="timeout"
+                        label="Timeout (seconds)"
+                        rules={[{ required: true }]}
+                    >
+                        <InputNumber min={1} max={3600} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                        name="description"
+                        label="Description (Optional)"
+                    >
+                        <Input.TextArea rows={2} placeholder="Model description" />
+                    </Form.Item>
+                    <Form.Item
+                        name="is_active"
+                        label="Active"
+                        valuePropName="checked"
+                    >
+                        <Switch />
+                    </Form.Item>
+                </Form>
+            </Modal>
         </Layout>
     )
 }

@@ -96,10 +96,27 @@ export const uploadUserDataFile = (file, description) => {
 }
 
 /**
- * 更新用户数据文件
+ * 更新用户数据文件描述（已废弃，保留用于兼容）
  */
 export const updateUserDataFile = (id, description) => {
   return api.put(`/user/data/${id}?description=${encodeURIComponent(description)}`)
+}
+
+/**
+ * 编辑用户数据内容（单独或批量）
+ */
+export const editUserDataContent = (dataId, editRequest) => {
+  return api.put(`/user/data/${dataId}/edit`, editRequest)
+}
+
+/**
+ * 编辑单条数据的完整内容（支持一次修改多个允许的字段）
+ */
+export const editSingleItemComplete = (dataId, itemIndex, editedItem) => {
+  return api.put(`/user/data/${dataId}/edit-item`, {
+    item_index: itemIndex,
+    edited_item: editedItem
+  })
 }
 
 /**
@@ -114,6 +131,44 @@ export const deleteUserDataFile = (id) => {
  */
 export const getUserDataContent = (dataId) => {
   return api.get(`/user/data/${dataId}/content`)
+}
+
+/**
+ * 删除单条数据
+ */
+export const deleteSingleItem = (dataId, itemIndex) => {
+  return api.delete(`/user/data/${dataId}/items/${itemIndex}`)
+}
+
+/**
+ * 批量删除数据
+ */
+export const batchDeleteItems = (dataId, itemIndices) => {
+  return api.request({
+    method: 'delete',
+    url: `/user/data/${dataId}/items`,
+    data: { item_indices: itemIndices }
+  })
+}
+
+/**
+ * 添加单条数据
+ */
+export const addSingleItem = (dataId, newItem) => {
+  return api.post(`/user/data/${dataId}/items`, {
+    new_item: newItem
+  })
+}
+
+/**
+ * 导入并追加CSV或JSONL数据
+ */
+export const appendDataFile = (dataId, file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post(`/user/data/${dataId}/append`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
 }
 
 // ---------- 评测配置 ----------
@@ -247,6 +302,43 @@ export const getAdminData = () => {
  */
 export const deleteAdminData = (userId, dataId) => {
   return api.delete(`/admin/users/${userId}/data/${dataId}`)
+}
+
+// ---------- 模型配置接口 ----------
+
+/**
+ * 获取所有可用的模型配置（普通用户）
+ */
+export const getModelConfigs = () => {
+  return api.get('/model-configs')
+}
+
+/**
+ * 管理员获取所有模型配置
+ */
+export const getAdminModelConfigs = () => {
+  return api.get('/admin/model-configs')
+}
+
+/**
+ * 管理员创建模型配置
+ */
+export const createAdminModelConfig = (config) => {
+  return api.post('/admin/model-configs', config)
+}
+
+/**
+ * 管理员更新模型配置
+ */
+export const updateAdminModelConfig = (configId, updates) => {
+  return api.put(`/admin/model-configs/${configId}`, updates)
+}
+
+/**
+ * 管理员删除模型配置
+ */
+export const deleteAdminModelConfig = (configId) => {
+  return api.delete(`/admin/model-configs/${configId}`)
 }
 
 export default api

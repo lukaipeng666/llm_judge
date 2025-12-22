@@ -89,11 +89,31 @@ def init_database():
         )
     ''')
     
+    # 模型配置表
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS model_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model_name TEXT UNIQUE NOT NULL,
+            api_urls TEXT NOT NULL,
+            api_key TEXT,
+            temperature REAL DEFAULT 0.0,
+            top_p REAL DEFAULT 1.0,
+            max_tokens INTEGER DEFAULT 1024,
+            timeout INTEGER DEFAULT 10,
+            description TEXT,
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    
     # 创建索引
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_data_user_id ON user_data(user_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_tasks_user_id ON user_tasks(user_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_reports_user_id ON user_reports(user_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_reports_task_id ON user_reports(task_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_model_configs_model_name ON model_configs(model_name)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_model_configs_is_active ON model_configs(is_active)')
     
     conn.commit()
     conn.close()
@@ -291,6 +311,26 @@ def update_user_data(user_id: int, data_id: int, description: str) -> bool:
         SET description = ?, updated_at = ?
         WHERE id = ? AND user_id = ?
     ''', (description, datetime.now().isoformat(), data_id, user_id))
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+
+def update_user_data_content(user_id: int, data_id: int, file_content: str) -> bool:
+    """更新用户数据文件内容（JSONL格式）"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 计算新的文件大小
+    file_size = len(file_content.encode('utf-8'))
+    
+    cursor.execute('''
+        UPDATE user_data
+        SET file_content = ?, file_size = ?, updated_at = ?
+        WHERE id = ? AND user_id = ?
+    ''', (file_content, file_size, datetime.now().isoformat(), data_id, user_id))
     
     success = cursor.rowcount > 0
     conn.commit()
@@ -574,6 +614,172 @@ def delete_user_report(user_id: int, report_id: int) -> bool:
         DELETE FROM user_reports
         WHERE id = ? AND user_id = ?
     ''', (report_id, user_id))
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+
+# ==================== 模型配置操作 ====================
+
+def create_model_config(model_name: str, api_urls: List[str], api_key: str = None,
+                       temperature: float = 0.0, top_p: float = 1.0, max_tokens: int = 1024,
+                       timeout: int = 10, description: str = "") -> int:
+    """创建模型配置"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    now = datetime.now().isoformat()
+    
+    # api_urls 存储为逗号分隔的字符串
+    api_urls_str = ",".join(api_urls) if isinstance(api_urls, list) else api_urls
+    
+    cursor.execute('''
+        INSERT INTO model_configs (model_name, api_urls, api_key, temperature, top_p, 
+                                  max_tokens, timeout, description, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (model_name, api_urls_str, api_key, temperature, top_p, max_tokens, timeout, 
+          description, 1, now, now))
+    
+    config_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return config_id
+
+
+def get_all_model_configs(include_inactive: bool = False) -> List[Dict]:
+    """获取所有模型配置"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if include_inactive:
+        cursor.execute('''
+            SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
+                   timeout, description, is_active, created_at, updated_at
+            FROM model_configs
+            ORDER BY created_at DESC
+        ''')
+    else:
+        cursor.execute('''
+            SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
+                   timeout, description, is_active, created_at, updated_at
+            FROM model_configs
+            WHERE is_active = 1
+            ORDER BY created_at DESC
+        ''')
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    configs = []
+    for row in rows:
+        config = dict(row)
+        # 将 api_urls 字符串转换为列表
+        if config["api_urls"]:
+            config["api_urls"] = [url.strip() for url in config["api_urls"].split(",") if url.strip()]
+        else:
+            config["api_urls"] = []
+        configs.append(config)
+    
+    return configs
+
+
+def get_model_config_by_name(model_name: str) -> Optional[Dict]:
+    """根据模型名称获取模型配置"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
+               timeout, description, is_active, created_at, updated_at
+        FROM model_configs
+        WHERE model_name = ? AND is_active = 1
+    ''', (model_name,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        config = dict(row)
+        # 将 api_urls 字符串转换为列表
+        if config["api_urls"]:
+            config["api_urls"] = [url.strip() for url in config["api_urls"].split(",") if url.strip()]
+        else:
+            config["api_urls"] = []
+        return config
+    return None
+
+
+def get_model_config_by_id(config_id: int) -> Optional[Dict]:
+    """根据ID获取模型配置"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
+               timeout, description, is_active, created_at, updated_at
+        FROM model_configs
+        WHERE id = ?
+    ''', (config_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if row:
+        config = dict(row)
+        # 将 api_urls 字符串转换为列表
+        if config["api_urls"]:
+            config["api_urls"] = [url.strip() for url in config["api_urls"].split(",") if url.strip()]
+        else:
+            config["api_urls"] = []
+        return config
+    return None
+
+
+def update_model_config(config_id: int, updates: Dict) -> bool:
+    """更新模型配置"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # 构建动态更新语句
+    fields = []
+    values = []
+    allowed_fields = ["model_name", "api_urls", "api_key", "temperature", "top_p", 
+                     "max_tokens", "timeout", "description", "is_active"]
+    
+    for key, value in updates.items():
+        if key in allowed_fields:
+            if key == "api_urls" and isinstance(value, list):
+                # 将列表转换为逗号分隔的字符串
+                value = ",".join(value)
+            fields.append(f"{key} = ?")
+            values.append(value)
+    
+    if not fields:
+        return False
+    
+    fields.append("updated_at = ?")
+    values.append(datetime.now().isoformat())
+    values.append(config_id)
+    
+    cursor.execute(f'''
+        UPDATE model_configs
+        SET {", ".join(fields)}
+        WHERE id = ?
+    ''', values)
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+
+def delete_model_config(config_id: int) -> bool:
+    """删除模型配置"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('DELETE FROM model_configs WHERE id = ?', (config_id,))
     
     success = cursor.rowcount > 0
     conn.commit()

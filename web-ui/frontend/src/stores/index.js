@@ -49,10 +49,12 @@ const useStore = create((set, get) => ({
     checkpoint_interval: 32,
     resume: false,
     role: 'assistant',
-    timeout: 600,
-    max_tokens: 8000,
+    timeout: 10,
+    max_tokens: 1024,
     api_key: 'sk-xxx',
-    is_vllm: false,
+    is_vllm: true,
+    temperature: 0.0,
+    top_p: 1.0,
   },
 
   // ==================== 任务管理 ====================
@@ -109,6 +111,14 @@ const useStore = create((set, get) => ({
   logout: () => {
     removeToken()
     removeUser()
+    // 清除可视化图表配置缓存
+    try {
+      localStorage.removeItem('visualization_chart_type')
+      localStorage.removeItem('visualization_bar_charts')
+      localStorage.removeItem('visualization_radar_charts')
+    } catch (err) {
+      console.error('清除图表配置缓存失败:', err)
+    }
     set({ 
       token: null, 
       user: null, 
@@ -142,10 +152,12 @@ const useStore = create((set, get) => ({
       checkpoint_interval: 32,
       resume: false,
       role: 'assistant',
-      timeout: 600,
-      max_tokens: 8000,
+      timeout: 10,
+      max_tokens: 1024,
       api_key: 'sk-xxx',
-      is_vllm: false,
+      is_vllm: true,
+      temperature: 0.0,
+      top_p: 1.0,
     }
   })),
 
@@ -236,6 +248,7 @@ const useStore = create((set, get) => ({
   },
 
   clearDataDetail: () => set({ currentDataDetail: null }),
+
 
   // ==================== Actions: 任务管理 ====================
   

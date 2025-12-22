@@ -42,6 +42,8 @@ def parse_args():
     parser.add_argument('--max-tokens', type=int, default=16384, help='API调用超时时间（秒）')
     parser.add_argument('--api_key', type=str, default="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help='API KEY')
     parser.add_argument('--is_vllm', action='store_true', default=False, help='是否使用vllm')
+    parser.add_argument('--temperature', type=float, default=0.0, help='生成温度')
+    parser.add_argument('--top-p', type=float, default=1.0, help='Top P采样参数')
 
     return parser.parse_args()
 
@@ -133,6 +135,8 @@ def main():
         max_tokens=args.max_tokens,
         api_key=args.api_key,
         is_vllm=args.is_vllm,
+        temperature=getattr(args, 'temperature', 0.0),
+        top_p=getattr(args, 'top_p', 1.0),
         progress_callback=progress_callback
     )
 

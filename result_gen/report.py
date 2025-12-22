@@ -40,6 +40,7 @@ def generate_report(summary: Dict[str, Any], results: List[Dict], badcases: List
             'config': safe_config,
             'summary': summary,
             'badcases': badcases,
+            'results': results,  # 保存所有测试结果
         }
         
         # 通过HTTP API保存报告

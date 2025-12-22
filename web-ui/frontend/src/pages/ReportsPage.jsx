@@ -12,6 +12,7 @@ import {
   Col,
   Statistic,
   Empty,
+  message,
 } from 'antd'
 import {
   SearchOutlined,
@@ -19,6 +20,7 @@ import {
   EyeOutlined,
   ReloadOutlined,
   DeleteOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import useStore from '../stores'
@@ -78,6 +80,79 @@ function ReportsPage() {
       await deleteReport(record.id)
     } catch (err) {
       alert(`删除失败: ${err.message}`)
+    }
+  }
+
+  // 导出CSV功能
+  const handleExportCSV = async (record) => {
+    try {
+      // 获取报告详情
+      const reportDetail = await useStore.getState().fetchReportDetail(record.dataset, record.model)
+      
+      if (!reportDetail || !reportDetail.results) {
+        message.warning('报告中没有完整的测试结果数据')
+        return
+      }
+
+      // 生成CSV内容
+      const results = reportDetail.results
+      
+      // CSV标题行
+      const headers = ['得分', '用户输入', '模型输出', '参考答案']
+      const csvRows = [headers.join(',')]
+
+      // 数据行
+      results.forEach(result => {
+        const score = result.score !== undefined ? result.score.toFixed(4) : '-'
+        
+        // 处理用户输入（可能是数组或字符串）
+        let userInput = ''
+        if (Array.isArray(result.user_input)) {
+          const userMsg = result.user_input.find(msg => msg.role === 'user')
+          userInput = userMsg?.content || JSON.stringify(result.user_input)
+        } else {
+          userInput = result.user_input || '-'
+        }
+        
+        const modelOutput = result.model_output || '-'
+        const referenceOutput = result.reference_output || '-'
+        
+        // 转义CSV字段（处理逗号、引号、换行符）
+        const escapeCSV = (field) => {
+          if (field === null || field === undefined) return '""'
+          const str = String(field)
+          // 如果包含逗号、引号或换行符，需要用引号包裹，并转义内部引号
+          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`
+          }
+          return `"${str}"`
+        }
+        
+        csvRows.push([
+          escapeCSV(score),
+          escapeCSV(userInput),
+          escapeCSV(modelOutput),
+          escapeCSV(referenceOutput)
+        ].join(','))
+      })
+
+      const csvContent = csvRows.join('\n')
+      
+      // 生成文件名：数据集名前缀+模型名称.csv
+      const datasetPrefix = record.dataset.replace(/\.[^/.]+$/, '') // 去除扩展名
+      const filename = `${datasetPrefix}+${record.model}.csv`
+      
+      // 创建下载链接
+      const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = filename
+      link.click()
+      
+      message.success(`已导出 ${filename}`)
+    } catch (err) {
+      console.error('导出失败:', err)
+      message.error(`导出失败: ${err.message}`)
     }
   }
 
@@ -159,6 +234,16 @@ function ReportsPage() {
             onClick={() => navigate(`/reports/${encodeURIComponent(record.dataset)}/${encodeURIComponent(record.model)}`)}
           >
             查看详情
+          </Button>
+          <Button
+            type="link"
+            icon={<DownloadOutlined />}
+            onClick={(e) => {
+              e.stopPropagation();  // 阻止事件冒泡到行点击
+              handleExportCSV(record);
+            }}
+          >
+            导出
           </Button>
           <Button
             type="link"
