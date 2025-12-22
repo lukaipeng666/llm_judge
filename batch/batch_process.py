@@ -240,7 +240,7 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
             except ValueError:  # 更精准的异常捕获（仅捕获数字转换错误）
                 print("请输入有效的数字，重新输入：")
         else:
-            max_workers = multiprocessing.cpu_count() // 2
+            max_workers = min(multiprocessing.cpu_count() // 2, max_workers)
             break
 
     print(f"最终并发数设置为：{max_workers}")
