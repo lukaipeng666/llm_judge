@@ -133,6 +133,44 @@ export const getUserDataContent = (dataId) => {
   return api.get(`/user/data/${dataId}/content`)
 }
 
+/**
+ * 删除单条数据
+ */
+export const deleteSingleItem = (dataId, itemIndex) => {
+  return api.delete(`/user/data/${dataId}/items/${itemIndex}`)
+}
+
+/**
+ * 批量删除数据
+ */
+export const batchDeleteItems = (dataId, itemIndices) => {
+  return api.request({
+    method: 'delete',
+    url: `/user/data/${dataId}/items`,
+    data: { item_indices: itemIndices }
+  })
+}
+
+/**
+ * 添加单条数据
+ */
+export const addSingleItem = (dataId, newItem) => {
+  return api.post(`/user/data/${dataId}/items`, {
+    new_item: newItem
+  })
+}
+
+/**
+ * 导入并追加CSV或JSONL数据
+ */
+export const appendDataFile = (dataId, file) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post(`/user/data/${dataId}/append`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
 // ---------- 评测配置 ----------
 
 /**

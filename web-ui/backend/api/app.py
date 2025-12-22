@@ -553,6 +553,16 @@ class SingleItemEditRequest(BaseModel):
     edited_item: Dict[str, Any]  # 编辑后的完整JSON对象
 
 
+class BatchDeleteItemsRequest(BaseModel):
+    """批量删除数据项请求模型"""
+    item_indices: List[int]  # 要删除的数据索引列表
+
+
+class AddItemRequest(BaseModel):
+    """添加单条数据请求模型"""
+    new_item: Dict[str, Any]  # 新数据项的完整JSON对象
+
+
 def validate_item_edit(original_item: Dict, edited_item: Dict) -> Tuple[bool, Optional[str]]:
     """验证编辑后的JSON是否只修改了允许的字段"""
     # 检查结构是否一致（不允许修改JSON结构）
@@ -772,6 +782,286 @@ async def delete_user_data_file(data_id: int, current_user: Dict = Depends(get_c
         raise HTTPException(status_code=404, detail="Data file not found or access denied")
     
     return {"message": "Data file deleted successfully"}
+
+
+@app.delete("/api/user/data/{data_id}/items/{item_index}")
+async def delete_single_item(data_id: int, item_index: int, 
+                             current_user: Dict = Depends(get_current_user)):
+    """删除单条数据"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            if not file_content:
+                raise HTTPException(status_code=404, detail="Data content not found")
+            
+            # 解析JSONL内容
+            data_items = []
+            for line in file_content.split("\n"):
+                line = line.strip()
+                if line:
+                    data_items.append(json.loads(line))
+            
+            # 验证索引
+            if item_index < 0 or item_index >= len(data_items):
+                raise HTTPException(status_code=400, detail="Invalid item index")
+            
+            # 删除指定索引的数据项
+            data_items.pop(item_index)
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Item deleted successfully",
+                "deleted_count": 1
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to delete item: {str(e)}")
+
+
+@app.delete("/api/user/data/{data_id}/items")
+async def batch_delete_items(data_id: int, delete_request: BatchDeleteItemsRequest,
+                             current_user: Dict = Depends(get_current_user)):
+    """批量删除数据"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        if not delete_request.item_indices:
+            raise HTTPException(status_code=400, detail="No items to delete")
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            if not file_content:
+                raise HTTPException(status_code=404, detail="Data content not found")
+            
+            # 解析JSONL内容
+            data_items = []
+            for line in file_content.split("\n"):
+                line = line.strip()
+                if line:
+                    data_items.append(json.loads(line))
+            
+            # 验证索引并排序（从大到小删除，避免索引变化）
+            item_indices = sorted(set(delete_request.item_indices), reverse=True)
+            for idx in item_indices:
+                if idx < 0 or idx >= len(data_items):
+                    raise HTTPException(status_code=400, detail=f"Invalid item index: {idx}")
+            
+            # 删除指定索引的数据项（从后往前删除）
+            deleted_count = 0
+            for idx in item_indices:
+                data_items.pop(idx)
+                deleted_count += 1
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Items deleted successfully",
+                "deleted_count": deleted_count
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to delete items: {str(e)}")
+
+
+@app.post("/api/user/data/{data_id}/items")
+async def add_single_item(data_id: int, add_request: AddItemRequest,
+                          current_user: Dict = Depends(get_current_user)):
+    """添加单条数据"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 验证新数据项格式
+        if not isinstance(add_request.new_item, dict):
+            raise HTTPException(status_code=400, detail="Invalid item format")
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            
+            # 解析JSONL内容
+            data_items = []
+            if file_content:
+                for line in file_content.split("\n"):
+                    line = line.strip()
+                    if line:
+                        data_items.append(json.loads(line))
+            
+            # 添加新数据项到末尾
+            data_items.append(add_request.new_item)
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Item added successfully",
+                "added_count": 1,
+                "new_index": len(data_items) - 1
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to add item: {str(e)}")
+
+
+@app.post("/api/user/data/{data_id}/append")
+async def append_data_file(data_id: int, file: UploadFile = File(...),
+                           current_user: Dict = Depends(get_current_user)):
+    """导入并追加CSV或JSONL数据到现有数据后面"""
+    try:
+        import httpx
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        database_service_url = yaml_config['web_service']['database_service_url']
+        
+        # 验证文件格式
+        if not file.filename.endswith(".jsonl") and not file.filename.endswith(".csv"):
+            raise HTTPException(status_code=400, detail="Only .jsonl and .csv files are supported")
+        
+        new_items = []
+        
+        if file.filename.endswith(".jsonl"):
+            # JSONL文件直接解析
+            content = await file.read()
+            file_content = content.decode('utf-8')
+            
+            # 解析JSONL内容
+            lines = file_content.strip().split('\n')
+            for line in lines:
+                line = line.strip()
+                if line:
+                    try:
+                        new_items.append(json.loads(line))
+                    except json.JSONDecodeError as e:
+                        raise HTTPException(status_code=400, detail=f"Invalid JSONL format: {str(e)}")
+        
+        elif file.filename.endswith(".csv"):
+            # CSV文件需要先转换为JSONL
+            from .csv_to_jsonl import convert_csv_to_jsonl_in_memory
+            
+            csv_content = (await file.read()).decode('utf-8-sig')
+            
+            # 转换CSV并验证
+            jsonl_data, validation_info = convert_csv_to_jsonl_in_memory(csv_content)
+            
+            # 检查转换是否成功
+            if validation_info["errors"]:
+                error_msg = "CSV转换失败: " + "; ".join(validation_info["errors"])
+                raise HTTPException(status_code=400, detail=error_msg)
+            
+            new_items = jsonl_data
+        
+        if not new_items:
+            raise HTTPException(status_code=400, detail="No valid data items found in file")
+        
+        # 获取当前数据内容
+        with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            response = client.get(f"/api/user-data/{current_user['user_id']}/{data_id}")
+            response.raise_for_status()
+            data_info = response.json()
+            
+            file_content = data_info.get("file_content", "")
+            
+            # 解析现有JSONL内容
+            data_items = []
+            if file_content:
+                for line in file_content.split("\n"):
+                    line = line.strip()
+                    if line:
+                        data_items.append(json.loads(line))
+            
+            # 追加新数据项到末尾
+            data_items.extend(new_items)
+            
+            # 将修改后的数据转换回JSONL格式
+            updated_content = "\n".join(json.dumps(item, ensure_ascii=False) for item in data_items)
+            
+            # 更新数据库
+            update_response = client.put(f"/api/user-data/{current_user['user_id']}/{data_id}/content", json={
+                "file_content": updated_content
+            })
+            update_response.raise_for_status()
+            
+            return {
+                "message": "Data appended successfully",
+                "added_count": len(new_items),
+                "total_count": len(data_items)
+            }
+            
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Database service error: {e.response.text}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to append data: {str(e)}")
 
 
 @app.get("/api/data-files")
