@@ -154,7 +154,7 @@ def batch_evaluate(test_data: List[Dict], api_urls: list, scoring_func: Callable
     # 第一步：并行获取未处理数据的模型输出（不评分）
     result_last_len = 0
     if unprocessed_data:
-        with ThreadPoolExecutor(max_workers=multiprocessing.cpu_count()) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交所有任务（参数需可序列化，model 若为大模型实例需注意内存占用）
             future_to_index = {
                 executor.submit(

@@ -421,6 +421,13 @@ export default function AdminDashboard() {
             render: (val) => `${val}s`
         },
         {
+            title: 'Max Concurrency',
+            dataIndex: 'max_concurrency',
+            key: 'max_concurrency',
+            width: 120,
+            render: (val) => val || 10
+        },
+        {
             title: 'Status',
             dataIndex: 'is_active',
             key: 'is_active',
@@ -620,6 +627,7 @@ export default function AdminDashboard() {
                         top_p: 1.0,
                         max_tokens: 1024,
                         timeout: 10,
+                        max_concurrency: 10,
                         is_active: true
                     }}
                 >
@@ -673,6 +681,13 @@ export default function AdminDashboard() {
                         rules={[{ required: true }]}
                     >
                         <InputNumber min={1} max={3600} style={{ width: '100%' }} />
+                    </Form.Item>
+                    <Form.Item
+                        name="max_concurrency"
+                        label="Max Concurrency (Maximum concurrent requests)"
+                        rules={[{ required: true, message: 'Please input max concurrency' }]}
+                    >
+                        <InputNumber min={1} max={1000} style={{ width: '100%' }} />
                     </Form.Item>
                     <Form.Item
                         name="description"

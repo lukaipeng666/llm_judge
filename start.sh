@@ -112,6 +112,121 @@ echo ""
 LOG_DIR="./web-ui/logs"
 mkdir -p "$LOG_DIR"
 
+# 获取Redis配置
+REDIS_PORT=$(python3 -c "
+import yaml
+import sys
+try:
+    with open('$CONFIG_FILE', 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+        redis_port = config.get('redis_service', {}).get('port', 6379)
+        print(redis_port)
+except Exception as e:
+    print('6379')
+") || echo "6379"
+
+# 检查Redis端口
+echo "🔍 检测Redis端口占用..."
+REDIS_PID=$(lsof -ti:$REDIS_PORT 2>/dev/null)
+if [ -n "$REDIS_PID" ]; then
+    echo "⚠️  检测到端口 $REDIS_PORT (Redis) 被进程 $REDIS_PID 占用，正在终止..."
+    kill -9 $REDIS_PID 2>/dev/null
+    sleep 1
+fi
+
+# 启动Redis服务
+echo "🔴 启动Redis服务..."
+
+# 查找 redis-server 可执行文件
+REDIS_SERVER=""
+REDIS_CLI=""
+
+# 1. 首先检查 PATH 中是否有 redis-server
+if command -v redis-server &> /dev/null; then
+    REDIS_SERVER=$(command -v redis-server)
+    REDIS_CLI=$(command -v redis-cli 2>/dev/null || echo "")
+fi
+
+# 2. 如果 PATH 中没有，尝试在常见位置查找
+if [ -z "$REDIS_SERVER" ]; then
+    # 常见 Redis 安装位置
+    POSSIBLE_PATHS=(
+        "/tmp/redis-stable/src/redis-server"
+        "/usr/local/bin/redis-server"
+        "/usr/bin/redis-server"
+        "/opt/redis/bin/redis-server"
+        "$HOME/redis-stable/src/redis-server"
+        "$HOME/.local/bin/redis-server"
+    )
+    
+    for path in "${POSSIBLE_PATHS[@]}"; do
+        if [ -f "$path" ] && [ -x "$path" ]; then
+            REDIS_SERVER="$path"
+            # 尝试找到对应的 redis-cli
+            CLI_PATH="${path%/*}/redis-cli"
+            if [ -f "$CLI_PATH" ] && [ -x "$CLI_PATH" ]; then
+                REDIS_CLI="$CLI_PATH"
+            fi
+            echo "📌 在 $path 找到 redis-server"
+            break
+        fi
+    done
+fi
+
+# 3. 如果找到了 redis-server，启动服务
+if [ -n "$REDIS_SERVER" ]; then
+    # 如果找到了 redis-cli，使用它；否则尝试在相同目录查找
+    if [ -z "$REDIS_CLI" ]; then
+        REDIS_DIR=$(dirname "$REDIS_SERVER")
+        if [ -f "$REDIS_DIR/redis-cli" ] && [ -x "$REDIS_DIR/redis-cli" ]; then
+            REDIS_CLI="$REDIS_DIR/redis-cli"
+        fi
+    fi
+    
+    # Redis服务器日志输出到backend.log
+    nohup "$REDIS_SERVER" --port $REDIS_PORT --daemonize no >> "$LOG_DIR/backend.log" 2>&1 &
+    REDIS_SERVER_PID=$!
+    
+    # 等待Redis启动
+    echo "⏳ 等待Redis服务启动..."
+    max_attempts=10
+    attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        # 使用找到的 redis-cli 或默认的 redis-cli
+        if [ -n "$REDIS_CLI" ]; then
+            if "$REDIS_CLI" -p $REDIS_PORT ping > /dev/null 2>&1; then
+                echo "✅ Redis服务启动成功 (PID: $REDIS_SERVER_PID, Port: $REDIS_PORT)"
+                break
+            fi
+        elif command -v redis-cli &> /dev/null; then
+            if redis-cli -p $REDIS_PORT ping > /dev/null 2>&1; then
+                echo "✅ Redis服务启动成功 (PID: $REDIS_SERVER_PID, Port: $REDIS_PORT)"
+                break
+            fi
+        else
+            # 如果没有 redis-cli，等待一段时间后假设启动成功
+            sleep 2
+            if ps -p $REDIS_SERVER_PID > /dev/null 2>&1; then
+                echo "✅ Redis服务启动成功 (PID: $REDIS_SERVER_PID, Port: $REDIS_PORT)"
+                break
+            fi
+        fi
+        attempt=$((attempt + 1))
+        if [ $attempt -eq $max_attempts ]; then
+            echo "⚠️  Redis服务启动超时，流量控制功能可能不可用"
+            echo "   请确保已安装redis-server: brew install redis (macOS) 或 apt install redis-server (Linux)"
+        fi
+        sleep 1
+    done
+    
+    # 保存Redis PID
+    echo "$REDIS_SERVER_PID" > "$LOG_DIR/redis.pid"
+else
+    echo "⚠️  未找到redis-server，流量控制功能将不可用"
+    echo "   请安装Redis: brew install redis (macOS) 或 apt install redis-server (Linux)"
+    echo "   或参考 README.md 中的 Redis 安装说明"
+fi
+
 # 启动数据库服务
 echo "📊 启动数据库服务..."
 cd web-ui/backend
@@ -189,6 +304,9 @@ echo ""
 echo "========================================="
 echo "✅ 所有服务启动成功"
 echo "========================================="
+echo "🔴 Redis服务: localhost:$REDIS_PORT"
+echo "   - 日志输出到: $LOG_DIR/backend.log"
+echo ""
 echo "📊 数据库服务: http://localhost:$DB_PORT"
 echo "   - API文档: http://localhost:$DB_PORT/docs"
 echo "   - 健康检查: http://localhost:$DB_PORT/health"
@@ -201,6 +319,9 @@ echo "   - 本机访问: http://localhost:$FE_PORT"
 echo "   - 局域网访问: http://$LOCAL_IP:$FE_PORT"
 echo ""
 echo "📝 服务PID:"
+if [ -f "$LOG_DIR/redis.pid" ]; then
+    echo "   - Redis: $(cat $LOG_DIR/redis.pid)"
+fi
 echo "   - 数据库: $DB_PID"
 echo "   - 后端API: $API_PID"
 echo "   - 前端: $FE_PID"

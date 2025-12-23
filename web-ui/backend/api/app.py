@@ -12,6 +12,9 @@ import asyncio
 import subprocess
 import threading
 import shutil
+import time
+import redis
+import logging
 from collections import deque, defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -19,9 +22,13 @@ from typing import List, Optional, Dict, Any, Tuple
 from urllib.parse import unquote, quote
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import uvicorn
 import yaml
+
+# 配置日志
+logger = logging.getLogger(__name__)
 
 # 导入认证和数据库模块
 from .auth import UserRegister, UserLogin, Token, create_access_token, get_current_user
@@ -168,6 +175,22 @@ async def startup_event():
     """服务启动时的初始化任务"""
     import asyncio
     
+    # 配置日志格式和级别
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # 设置uvicorn和fastapi的日志级别
+    uvicorn_logger = logging.getLogger("uvicorn")
+    uvicorn_logger.setLevel(logging.INFO)
+    fastapi_logger = logging.getLogger("fastapi")
+    fastapi_logger.setLevel(logging.INFO)
+    
+    # 确保我们的logger也使用INFO级别
+    logger.setLevel(logging.INFO)
+    
     async def periodic_cleanup():
         """定期清理已结束的进程"""
         while True:
@@ -176,7 +199,7 @@ async def startup_event():
     
     # 启动后台清理任务
     asyncio.create_task(periodic_cleanup())
-    print("[INFO] 进程自动清理任务已启动（每60秒执行一次）")
+    logger.info("进程自动清理任务已启动（每60秒执行一次）")
 
 
 @app.get("/")
@@ -1529,6 +1552,361 @@ async def get_available_model_configs(current_user: Dict = Depends(get_current_u
             return response.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Redis 连接和模型调用代理接口 ====================
+
+# 全局 Redis 客户端
+_redis_client: Optional[redis.Redis] = None
+
+def get_redis_client() -> redis.Redis:
+    """获取 Redis 客户端（懒加载）"""
+    global _redis_client
+    if _redis_client is None:
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        
+        redis_config = yaml_config.get('redis_service', {})
+        redis_host = redis_config.get('host', 'localhost')
+        redis_port = redis_config.get('port', 6379)
+        redis_db = redis_config.get('db', 0)
+        
+        logger.info(f"[Redis] 初始化Redis客户端: {redis_host}:{redis_port}/{redis_db}")
+        
+        _redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            decode_responses=True
+        )
+        
+        # 测试连接
+        try:
+            _redis_client.ping()
+            logger.info(f"[Redis] Redis连接成功: {redis_host}:{redis_port}/{redis_db}")
+        except redis.ConnectionError as e:
+            logger.error(f"[Redis] Redis连接失败: {e}")
+            raise
+    
+    return _redis_client
+
+
+def get_model_max_concurrency(model_name: str) -> int:
+    """获取模型的最大并发数"""
+    import httpx
+    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    with open(config_path, 'r', encoding='utf-8') as f:
+        yaml_config = yaml.safe_load(f)
+    database_service_url = yaml_config['web_service']['database_service_url']
+    
+    try:
+        with httpx.Client(base_url=database_service_url, timeout=10.0) as client:
+            response = client.get(f"/api/model-configs/by-name/{model_name}")
+            if response.status_code == 200:
+                config = response.json()
+                max_concurrency = config.get('max_concurrency', 10)
+                logger.debug(f"[Redis] 模型 {model_name} 最大并发数: {max_concurrency}")
+                return max_concurrency
+    except Exception as e:
+        logger.warning(f"[Redis] 获取模型配置失败 {model_name}: {e}")
+    default_concurrency = 10
+    logger.info(f"[Redis] 使用默认并发数 {default_concurrency} (模型: {model_name})")
+    return default_concurrency
+
+
+class ModelCallRequest(BaseModel):
+    """模型调用请求"""
+    api_url: str
+    api_key: str
+    messages: List[Dict[str, str]]
+    model: str
+    temperature: float = 0.0
+    max_tokens: int = 8192
+    timeout: int = 300
+    is_vllm: bool = False
+    top_p: float = 1.0
+
+
+class ModelCallResponse(BaseModel):
+    """模型调用响应"""
+    success: bool
+    content: str = ""
+    error: str = ""
+
+
+def _model_call_sync(request: ModelCallRequest) -> ModelCallResponse:
+    """
+    同步执行模型调用（在线程池中运行）
+    """
+    # 读取配置
+    config_path = Path(__file__).parent.parent.parent / "config.yaml"
+    with open(config_path, 'r', encoding='utf-8') as f:
+        yaml_config = yaml.safe_load(f)
+    
+    redis_config = yaml_config.get('redis_service', {})
+    max_wait_time = redis_config.get('max_wait_time', 300)  # 最大等待300秒
+    
+    model_name = request.model
+    redis_key = f"model_concurrency:{model_name}"
+    
+    # 获取模型的最大并发数
+    max_concurrency = get_model_max_concurrency(model_name)
+    
+    try:
+        redis_client = get_redis_client()
+        
+        # 尝试获取锁（等待直到获取到或超时）
+        start_time = time.time()
+        acquired = False
+        wait_iterations = 0
+        
+        while time.time() - start_time < max_wait_time:
+            # 获取当前并发数
+            current_count = redis_client.get(redis_key)
+            current_count = int(current_count) if current_count else 0
+            
+            if current_count < max_concurrency:
+                # 使用 INCR 原子操作增加计数
+                new_count = redis_client.incr(redis_key)
+                # 设置过期时间，防止永久占用（1小时）
+                redis_client.expire(redis_key, 3600)
+                
+                # 二次检查：如果增加后超过限制，回退并继续等待
+                if new_count > max_concurrency:
+                    redis_client.decr(redis_key)
+                    logger.debug(f"[Redis] 并发数超限，回退: {model_name} (当前: {new_count}, 最大: {max_concurrency})")
+                    time.sleep(0.5)
+                    continue
+                
+                acquired = True
+                elapsed_time = time.time() - start_time
+                if wait_iterations > 0:
+                    logger.info(f"[Redis] 获取并发槽位成功: {model_name} (等待: {elapsed_time:.2f}秒, 当前并发: {new_count}/{max_concurrency})")
+                else:
+                    logger.debug(f"[Redis] 获取并发槽位成功: {model_name} (当前并发: {new_count}/{max_concurrency})")
+                break
+            
+            # 等待一段时间后重试
+            wait_iterations += 1
+            if wait_iterations % 10 == 0:  # 每5秒记录一次等待状态
+                elapsed_time = time.time() - start_time
+                logger.info(f"[Redis] 等待并发槽位: {model_name} (已等待: {elapsed_time:.1f}秒, 当前并发: {current_count}/{max_concurrency})")
+            time.sleep(0.5)
+        
+        if not acquired:
+            elapsed_time = time.time() - start_time
+            error_msg = f"等待超时（{elapsed_time:.1f}秒），模型 {model_name} 并发数已达上限 {max_concurrency}"
+            logger.error(f"[Redis] {error_msg}")
+            return ModelCallResponse(
+                success=False,
+                error=error_msg
+            )
+        
+        # 执行模型调用
+        try:
+            logger.debug(f"[Redis] 开始执行模型调用: {model_name}")
+            if request.is_vllm:
+                result = call_vllm_api_sync(
+                    api_url=request.api_url,
+                    messages=request.messages,
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    timeout=request.timeout,
+                    top_p=request.top_p
+                )
+            else:
+                result = call_openai_api_sync(
+                    api_url=request.api_url,
+                    api_key=request.api_key,
+                    messages=request.messages,
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    timeout=request.timeout,
+                    top_p=request.top_p
+                )
+            
+            logger.debug(f"[Redis] 模型调用完成: {model_name}")
+            return ModelCallResponse(success=True, content=result)
+        
+        finally:
+            # 释放并发计数
+            new_count = redis_client.decr(redis_key)
+            # 如果计数变为0或负数，删除key
+            if new_count <= 0:
+                redis_client.delete(redis_key)
+                logger.debug(f"[Redis] 释放并发槽位并删除key: {model_name} (剩余并发: 0)")
+            else:
+                logger.debug(f"[Redis] 释放并发槽位: {model_name} (剩余并发: {new_count}/{max_concurrency})")
+    
+    except redis.ConnectionError as e:
+        logger.error(f"[Redis] Redis连接错误: {e}")
+        logger.warning(f"[Redis] Redis不可用，回退到直接调用模式 (模型: {model_name})")
+        # Redis 不可用时，直接调用（不限流）
+        try:
+            if request.is_vllm:
+                result = call_vllm_api_sync(
+                    api_url=request.api_url,
+                    messages=request.messages,
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    timeout=request.timeout,
+                    top_p=request.top_p
+                )
+            else:
+                result = call_openai_api_sync(
+                    api_url=request.api_url,
+                    api_key=request.api_key,
+                    messages=request.messages,
+                    model=request.model,
+                    temperature=request.temperature,
+                    max_tokens=request.max_tokens,
+                    timeout=request.timeout,
+                    top_p=request.top_p
+                )
+            return ModelCallResponse(success=True, content=result)
+        except Exception as call_error:
+            logger.error(f"[Redis] 直接调用失败: {call_error}")
+            return ModelCallResponse(success=False, error=str(call_error))
+    
+    except Exception as e:
+        logger.error(f"[Redis] 模型调用异常: {model_name}, 错误: {e}")
+        return ModelCallResponse(success=False, error=str(e))
+
+
+@app.post("/api/model-call", response_model=ModelCallResponse)
+async def model_call_with_rate_limit(request: ModelCallRequest):
+    """
+    带流量控制的模型调用代理接口
+    使用 Redis 进行并发计数和限流
+    当并发超过限制时，最多等待 max_wait_time 秒
+    
+    注意：使用 asyncio.to_thread 在线程池中执行同步阻塞操作，
+    避免阻塞 FastAPI 事件循环，确保多个请求可以真正并发执行
+    """
+    import asyncio
+    # 在线程池中执行同步操作，不阻塞事件循环
+    return await asyncio.to_thread(_model_call_sync, request)
+
+
+def call_vllm_api_sync(
+    api_url: str,
+    messages: List[Dict[str, str]],
+    model: str,
+    temperature: float = 0.0,
+    max_tokens: int = 8192,
+    timeout: int = 600,
+    top_p: float = 1.0,
+) -> str:
+    """同步调用vllm API"""
+    import requests
+    
+    do_sample = temperature > 0.0
+    
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "top_p": top_p,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "do_sample": do_sample,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    
+    base_url = api_url.rstrip('/')
+    endpoint = "/chat/completions"
+    if not base_url.endswith('/v1'):
+        base_url += '/v1'
+    full_url = f"{base_url}{endpoint}"
+    
+    full_response = ""
+    
+    with requests.post(
+        full_url,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        stream=True,
+        timeout=timeout
+    ) as response:
+        response.raise_for_status()
+        
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line = line.decode('utf-8').strip()
+            if line.startswith("data: "):
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    return full_response.strip()
+                try:
+                    data = json.loads(data_str)
+                    delta = data["choices"][0]["delta"].get("content", "")
+                    if delta:
+                        full_response += delta
+                except (KeyError, json.JSONDecodeError):
+                    continue
+        
+        return full_response.strip()
+
+
+def call_openai_api_sync(
+    api_url: str,
+    api_key: str,
+    messages: List[Dict[str, str]],
+    model: str,
+    temperature: float = 0.0,
+    max_tokens: int = 16384,
+    timeout: int = 300,
+    top_p: float = 1.0,
+) -> str:
+    """同步调用OpenAI兼容API"""
+    import openai
+    
+    client = openai.OpenAI(
+        api_key=api_key,
+        base_url=api_url,
+        timeout=timeout,
+        max_retries=0
+    )
+    
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens
+    )
+    
+    return response.choices[0].message.content.strip()
+
+
+@app.get("/api/model-call/status/{model_name}")
+async def get_model_concurrency_status(model_name: str):
+    """获取模型当前并发状态"""
+    try:
+        redis_client = get_redis_client()
+        redis_key = f"model_concurrency:{model_name}"
+        current_count = redis_client.get(redis_key)
+        current_count = int(current_count) if current_count else 0
+        max_concurrency = get_model_max_concurrency(model_name)
+        
+        return {
+            "model": model_name,
+            "current_concurrency": current_count,
+            "max_concurrency": max_concurrency,
+            "available_slots": max(0, max_concurrency - current_count)
+        }
+    except redis.ConnectionError:
+        return {
+            "model": model_name,
+            "current_concurrency": 0,
+            "max_concurrency": 0,
+            "error": "Redis connection failed"
+        }
 
 
 if __name__ == "__main__":

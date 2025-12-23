@@ -16,3 +16,10 @@ web_service:
 frontend_service:
   port: 16386
   host: "0.0.0.0"
+
+# Redis服务配置
+redis_service:
+  host: "localhost"
+  port: 16387
+  db: 0
+  max_wait_time: 300  # 最大等待时间（秒），超过并发限制时的等待超时

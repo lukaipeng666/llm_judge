@@ -121,6 +121,7 @@ class ModelConfigCreate(BaseModel):
     top_p: float = 1.0
     max_tokens: int = 1024
     timeout: int = 10
+    max_concurrency: int = 10
     description: str = ""
 
 class ModelConfigUpdate(BaseModel):
@@ -131,6 +132,7 @@ class ModelConfigUpdate(BaseModel):
     top_p: Optional[float] = None
     max_tokens: Optional[int] = None
     timeout: Optional[int] = None
+    max_concurrency: Optional[int] = None
     description: Optional[str] = None
     is_active: Optional[int] = None
 
@@ -359,6 +361,7 @@ def create_model_config(config: ModelConfigCreate):
         top_p=config.top_p,
         max_tokens=config.max_tokens,
         timeout=config.timeout,
+        max_concurrency=config.max_concurrency,
         description=config.description
     )
     return {"config_id": config_id, "message": "Model config created successfully"}

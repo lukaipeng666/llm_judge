@@ -63,6 +63,21 @@ else
     echo "📊 数据库服务PID文件不存在"
 fi
 
+# 停止Redis服务
+if [ -f "$LOG_DIR/redis.pid" ]; then
+    REDIS_PID=$(cat "$LOG_DIR/redis.pid")
+    if ps -p $REDIS_PID > /dev/null 2>&1; then
+        echo "🔴 停止Redis服务 (PID: $REDIS_PID)..."
+        kill $REDIS_PID
+        STOP_COUNT=$((STOP_COUNT + 1))
+    else
+        echo "🔴 Redis服务未运行 (PID文件存在但进程不存在)"
+    fi
+    rm -f "$LOG_DIR/redis.pid"
+else
+    echo "🔴 Redis服务PID文件不存在"
+fi
+
 # 查找并杀死可能残留的相关进程
 echo "🔍 查找可能残留的服务进程..."
 FE_PROCESSES=$(ps aux | grep "npm run dev" | grep -v grep | awk '{print $2}')
@@ -83,6 +98,13 @@ DATABASE_PROCESSES=$(ps aux | grep "database/service/database_service.py" | grep
 if [ ! -z "$DATABASE_PROCESSES" ]; then
     echo "📊 停止残留的数据库进程: $DATABASE_PROCESSES"
     kill $DATABASE_PROCESSES 2>/dev/null
+    STOP_COUNT=$((STOP_COUNT + 1))
+fi
+
+REDIS_PROCESSES=$(ps aux | grep "redis-server" | grep -v grep | awk '{print $2}')
+if [ ! -z "$REDIS_PROCESSES" ]; then
+    echo "🔴 停止残留的Redis进程: $REDIS_PROCESSES"
+    kill $REDIS_PROCESSES 2>/dev/null
     STOP_COUNT=$((STOP_COUNT + 1))
 fi
 

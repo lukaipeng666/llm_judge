@@ -100,12 +100,22 @@ def init_database():
             top_p REAL DEFAULT 1.0,
             max_tokens INTEGER DEFAULT 1024,
             timeout INTEGER DEFAULT 10,
+            max_concurrency INTEGER DEFAULT 10,
             description TEXT,
             is_active INTEGER DEFAULT 1,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
     ''')
+    
+    # 检查并添加 max_concurrency 列（用于已存在的数据库）
+    try:
+        cursor.execute("SELECT max_concurrency FROM model_configs LIMIT 1")
+    except sqlite3.OperationalError:
+        # 列不存在，添加它
+        cursor.execute("ALTER TABLE model_configs ADD COLUMN max_concurrency INTEGER DEFAULT 10")
+        # 为现有记录设置默认值
+        cursor.execute("UPDATE model_configs SET max_concurrency = 10 WHERE max_concurrency IS NULL")
     
     # 创建索引
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_data_user_id ON user_data(user_id)')
@@ -625,7 +635,7 @@ def delete_user_report(user_id: int, report_id: int) -> bool:
 
 def create_model_config(model_name: str, api_urls: List[str], api_key: str = None,
                        temperature: float = 0.0, top_p: float = 1.0, max_tokens: int = 1024,
-                       timeout: int = 10, description: str = "") -> int:
+                       timeout: int = 10, max_concurrency: int = 10, description: str = "") -> int:
     """创建模型配置"""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -636,10 +646,10 @@ def create_model_config(model_name: str, api_urls: List[str], api_key: str = Non
     
     cursor.execute('''
         INSERT INTO model_configs (model_name, api_urls, api_key, temperature, top_p, 
-                                  max_tokens, timeout, description, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                  max_tokens, timeout, max_concurrency, description, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (model_name, api_urls_str, api_key, temperature, top_p, max_tokens, timeout, 
-          description, 1, now, now))
+          max_concurrency, description, 1, now, now))
     
     config_id = cursor.lastrowid
     conn.commit()
@@ -655,14 +665,14 @@ def get_all_model_configs(include_inactive: bool = False) -> List[Dict]:
     if include_inactive:
         cursor.execute('''
             SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
-                   timeout, description, is_active, created_at, updated_at
+                   timeout, max_concurrency, description, is_active, created_at, updated_at
             FROM model_configs
             ORDER BY created_at DESC
         ''')
     else:
         cursor.execute('''
             SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
-                   timeout, description, is_active, created_at, updated_at
+                   timeout, max_concurrency, description, is_active, created_at, updated_at
             FROM model_configs
             WHERE is_active = 1
             ORDER BY created_at DESC
@@ -691,7 +701,7 @@ def get_model_config_by_name(model_name: str) -> Optional[Dict]:
     
     cursor.execute('''
         SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
-               timeout, description, is_active, created_at, updated_at
+               timeout, max_concurrency, description, is_active, created_at, updated_at
         FROM model_configs
         WHERE model_name = ? AND is_active = 1
     ''', (model_name,))
@@ -717,7 +727,7 @@ def get_model_config_by_id(config_id: int) -> Optional[Dict]:
     
     cursor.execute('''
         SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, 
-               timeout, description, is_active, created_at, updated_at
+               timeout, max_concurrency, description, is_active, created_at, updated_at
         FROM model_configs
         WHERE id = ?
     ''', (config_id,))
@@ -745,7 +755,7 @@ def update_model_config(config_id: int, updates: Dict) -> bool:
     fields = []
     values = []
     allowed_fields = ["model_name", "api_urls", "api_key", "temperature", "top_p", 
-                     "max_tokens", "timeout", "description", "is_active"]
+                     "max_tokens", "timeout", "max_concurrency", "description", "is_active"]
     
     for key, value in updates.items():
         if key in allowed_fields:
