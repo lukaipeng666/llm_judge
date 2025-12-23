@@ -184,7 +184,8 @@ if [ -n "$REDIS_SERVER" ]; then
     fi
     
     # Redis服务器日志输出到backend.log
-    nohup "$REDIS_SERVER" --port $REDIS_PORT --daemonize no >> "$LOG_DIR/backend.log" 2>&1 &
+    # 禁用持久化：--save "" 禁用RDB快照，--appendonly no 禁用AOF
+    nohup "$REDIS_SERVER" --port $REDIS_PORT --save "" --appendonly no --daemonize no >> "$LOG_DIR/backend.log" 2>&1 &
     REDIS_SERVER_PID=$!
     
     # 等待Redis启动
