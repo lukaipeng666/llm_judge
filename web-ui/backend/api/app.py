@@ -1549,9 +1549,26 @@ async def admin_update_model_config(config_id: int, updates: Dict[str, Any], cur
         database_service_url = yaml_config['web_service']['database_service_url']
         
         with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            # 先获取当前配置以获取模型名称（用于清除缓存）
+            get_response = client.get(f"/api/model-configs/{config_id}")
+            model_name = None
+            if get_response.status_code == 200:
+                current_config = get_response.json()
+                model_name = current_config.get('model_name')
+            
+            # 更新配置
             response = client.put(f"/api/model-configs/{config_id}", json=updates)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # 如果更新了 max_concurrency 或模型名称，清除缓存
+            if model_name:
+                clear_model_concurrency_cache(model_name)
+            # 如果更新中包含新的模型名称，也清除新模型的缓存
+            if 'model_name' in updates:
+                clear_model_concurrency_cache(updates['model_name'])
+            
+            return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1567,9 +1584,23 @@ async def admin_delete_model_config(config_id: int, current_user: Dict = Depends
         database_service_url = yaml_config['web_service']['database_service_url']
         
         with httpx.Client(base_url=database_service_url, timeout=30.0) as client:
+            # 先获取配置以获取模型名称（用于清除缓存）
+            get_response = client.get(f"/api/model-configs/{config_id}")
+            model_name = None
+            if get_response.status_code == 200:
+                current_config = get_response.json()
+                model_name = current_config.get('model_name')
+            
+            # 删除配置
             response = client.delete(f"/api/model-configs/{config_id}")
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # 清除缓存
+            if model_name:
+                clear_model_concurrency_cache(model_name)
+            
+            return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1630,9 +1661,40 @@ def get_redis_client() -> redis.Redis:
     return _redis_client
 
 
+def clear_model_concurrency_cache(model_name: str):
+    """清除模型最大并发数的 Redis 缓存"""
+    cache_key = f"model_max_concurrency:{model_name}"
+    try:
+        redis_client = get_redis_client()
+        redis_client.delete(cache_key)
+        logger.info(f"[Redis] 已清除模型 {model_name} 的并发数缓存")
+    except redis.ConnectionError:
+        logger.debug(f"[Redis] Redis连接失败，跳过缓存清除 (模型: {model_name})")
+    except Exception as e:
+        logger.debug(f"[Redis] 清除缓存失败 (模型: {model_name}): {e}")
+
+
 def get_model_max_concurrency(model_name: str) -> int:
-    """获取模型的最大并发数"""
+    """获取模型的最大并发数（带 Redis 缓存）"""
     import httpx
+    
+    # Redis 缓存 key
+    cache_key = f"model_max_concurrency:{model_name}"
+    cache_ttl = 600  # 缓存10分钟（600秒）
+    
+    # 先尝试从 Redis 缓存读取
+    try:
+        redis_client = get_redis_client()
+        cached_value = redis_client.get(cache_key)
+        if cached_value is not None:
+            max_concurrency = int(cached_value)
+            return max_concurrency
+    except redis.ConnectionError:
+        logger.debug(f"[Redis] Redis连接失败，跳过缓存读取 (模型: {model_name})")
+    except Exception as e:
+        logger.debug(f"[Redis] 读取缓存失败 (模型: {model_name}): {e}")
+    
+    # 缓存未命中，从数据库查询
     config_path = Path(__file__).parent.parent.parent / "config.yaml"
     with open(config_path, 'r', encoding='utf-8') as f:
         yaml_config = yaml.safe_load(f)
@@ -1644,10 +1706,22 @@ def get_model_max_concurrency(model_name: str) -> int:
             if response.status_code == 200:
                 config = response.json()
                 max_concurrency = config.get('max_concurrency', 10)
-                logger.debug(f"[Redis] 模型 {model_name} 最大并发数: {max_concurrency}")
+                logger.info(f"[Redis] 从数据库获取模型 {model_name} 最大并发数: {max_concurrency}")
+                
+                # 将结果存入 Redis 缓存
+                try:
+                    redis_client = get_redis_client()
+                    redis_client.setex(cache_key, cache_ttl, max_concurrency)
+                    logger.info(f"[Redis] 已缓存模型 {model_name} 最大并发数: {max_concurrency} (TTL: {cache_ttl}秒)")
+                except redis.ConnectionError:
+                    logger.debug(f"[Redis] Redis连接失败，跳过缓存写入 (模型: {model_name})")
+                except Exception as e:
+                    logger.debug(f"[Redis] 写入缓存失败 (模型: {model_name}): {e}")
+                
                 return max_concurrency
     except Exception as e:
         logger.warning(f"[Redis] 获取模型配置失败 {model_name}: {e}")
+    
     default_concurrency = 10
     logger.info(f"[Redis] 使用默认并发数 {default_concurrency} (模型: {model_name})")
     return default_concurrency
@@ -1746,7 +1820,8 @@ def _model_call_sync(request: ModelCallRequest) -> ModelCallResponse:
             logger.error(f"[Redis] {error_msg}")
             return ModelCallResponse(
                 success=False,
-                error=error_msg
+                error=error_msg,
+                content="服务繁忙，请稍后再试"
             )
         
         # 执行模型调用
