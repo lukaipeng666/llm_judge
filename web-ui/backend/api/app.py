@@ -191,6 +191,44 @@ async def startup_event():
     # 确保我们的logger也使用INFO级别
     logger.setLevel(logging.INFO)
     
+    # 清理 Redis 中遗留的并发计数器（防止之前服务崩溃导致计数器残留）
+    try:
+        config_path = Path(__file__).parent.parent.parent / "config.yaml"
+        with open(config_path, 'r', encoding='utf-8') as f:
+            yaml_config = yaml.safe_load(f)
+        
+        redis_config = yaml_config.get('redis_service', {})
+        redis_host = redis_config.get('host', 'localhost')
+        redis_port = redis_config.get('port', 6379)
+        redis_db = redis_config.get('db', 0)
+        
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db,
+            decode_responses=True
+        )
+        
+        # 查找并删除所有并发计数器 key
+        cursor = 0
+        deleted_count = 0
+        while True:
+            cursor, keys = redis_client.scan(cursor, match="model_concurrency:*", count=100)
+            for key in keys:
+                redis_client.delete(key)
+                deleted_count += 1
+            if cursor == 0:
+                break
+        
+        if deleted_count > 0:
+            logger.info(f"[Redis] 启动时清理了 {deleted_count} 个遗留的并发计数器")
+        else:
+            logger.debug("[Redis] 启动时没有发现遗留的并发计数器")
+    except redis.ConnectionError as e:
+        logger.warning(f"[Redis] 启动时清理并发计数器失败（Redis未连接）: {e}")
+    except Exception as e:
+        logger.warning(f"[Redis] 启动时清理并发计数器失败: {e}")
+    
     async def periodic_cleanup():
         """定期清理已结束的进程"""
         while True:
@@ -1653,8 +1691,25 @@ def _model_call_sync(request: ModelCallRequest) -> ModelCallResponse:
     # 获取模型的最大并发数
     max_concurrency = get_model_max_concurrency(model_name)
     
+    # Lua 脚本：原子性地检查并增加计数器
+    # 返回值：1 表示成功获取槽位，0 表示并发已满
+    acquire_slot_script = """
+    local current = tonumber(redis.call('GET', KEYS[1]) or '0')
+    local max_concurrency = tonumber(ARGV[1])
+    if current < max_concurrency then
+        redis.call('INCR', KEYS[1])
+        redis.call('EXPIRE', KEYS[1], 3600)
+        return 1
+    else
+        return 0
+    end
+    """
+    
     try:
         redis_client = get_redis_client()
+        
+        # 注册 Lua 脚本
+        try_acquire = redis_client.register_script(acquire_slot_script)
         
         # 尝试获取锁（等待直到获取到或超时）
         start_time = time.time()
@@ -1662,37 +1717,28 @@ def _model_call_sync(request: ModelCallRequest) -> ModelCallResponse:
         wait_iterations = 0
         
         while time.time() - start_time < max_wait_time:
-            # 获取当前并发数
-            current_count = redis_client.get(redis_key)
-            current_count = int(current_count) if current_count else 0
+            # 使用 Lua 脚本原子性地尝试获取槽位
+            result = try_acquire(keys=[redis_key], args=[max_concurrency])
             
-            if current_count < max_concurrency:
-                # 使用 INCR 原子操作增加计数
-                new_count = redis_client.incr(redis_key)
-                # 设置过期时间，防止永久占用（1小时）
-                redis_client.expire(redis_key, 3600)
-                
-                # 二次检查：如果增加后超过限制，回退并继续等待
-                if new_count > max_concurrency:
-                    redis_client.decr(redis_key)
-                    logger.debug(f"[Redis] 并发数超限，回退: {model_name} (当前: {new_count}, 最大: {max_concurrency})")
-                    time.sleep(0.5)
-                    continue
-                
+            if result == 1:
                 acquired = True
+                current_count = redis_client.get(redis_key)
+                current_count = int(current_count) if current_count else 1
                 elapsed_time = time.time() - start_time
                 if wait_iterations > 0:
-                    logger.info(f"[Redis] 获取并发槽位成功: {model_name} (等待: {elapsed_time:.2f}秒, 当前并发: {new_count}/{max_concurrency})")
+                    logger.info(f"[Redis] 获取并发槽位成功: {model_name} (等待: {elapsed_time:.2f}秒, 当前并发: {current_count}/{max_concurrency})")
                 else:
-                    logger.debug(f"[Redis] 获取并发槽位成功: {model_name} (当前并发: {new_count}/{max_concurrency})")
+                    logger.info(f"[Redis] 获取并发槽位成功: {model_name} (当前并发: {current_count}/{max_concurrency})")
                 break
             
             # 等待一段时间后重试
             wait_iterations += 1
-            if wait_iterations % 10 == 0:  # 每5秒记录一次等待状态
+            if wait_iterations % 2 == 0:  # 每5秒记录一次等待状态
+                current_count = redis_client.get(redis_key)
+                current_count = int(current_count) if current_count else 0
                 elapsed_time = time.time() - start_time
                 logger.info(f"[Redis] 等待并发槽位: {model_name} (已等待: {elapsed_time:.1f}秒, 当前并发: {current_count}/{max_concurrency})")
-            time.sleep(0.5)
+            time.sleep(2.5)
         
         if not acquired:
             elapsed_time = time.time() - start_time
@@ -1705,7 +1751,6 @@ def _model_call_sync(request: ModelCallRequest) -> ModelCallResponse:
         
         # 执行模型调用
         try:
-            logger.debug(f"[Redis] 开始执行模型调用: {model_name}")
             if request.is_vllm:
                 result = call_vllm_api_sync(
                     api_url=request.api_url,
@@ -1728,7 +1773,6 @@ def _model_call_sync(request: ModelCallRequest) -> ModelCallResponse:
                     top_p=request.top_p
                 )
             
-            logger.debug(f"[Redis] 模型调用完成: {model_name}")
             return ModelCallResponse(success=True, content=result)
         
         finally:
@@ -1737,9 +1781,9 @@ def _model_call_sync(request: ModelCallRequest) -> ModelCallResponse:
             # 如果计数变为0或负数，删除key
             if new_count <= 0:
                 redis_client.delete(redis_key)
-                logger.debug(f"[Redis] 释放并发槽位并删除key: {model_name} (剩余并发: 0)")
+                logger.info(f"[Redis] 释放并发槽位并删除key: {model_name} (剩余并发: 0)")
             else:
-                logger.debug(f"[Redis] 释放并发槽位: {model_name} (剩余并发: {new_count}/{max_concurrency})")
+                logger.info(f"[Redis] 释放并发槽位: {model_name} (剩余并发: {new_count}/{max_concurrency})")
     
     except redis.ConnectionError as e:
         logger.error(f"[Redis] Redis连接错误: {e}")
