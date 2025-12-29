@@ -6,14 +6,14 @@ echo "🛑 停止所有服务..."
 echo "========================================="
 
 # 检查是否在正确的目录
-if [ ! -f "web-ui/backend/database/service/database_service.py" ] || [ ! -f "web-ui/frontend/package.json" ]; then
+if [ ! -f "config.yaml" ] || [ ! -d "backend/cmd/web-api" ]; then
     echo "❌ Error: 请在项目根目录下运行此脚本"
     echo "   使用方法: bash stop.sh"
     exit 1
 fi
 
 # 创建日志目录变量
-LOG_DIR="./web-ui/logs"
+LOG_DIR="./logs"
 
 # 读取PID文件并停止进程
 STOP_COUNT=0
@@ -33,19 +33,19 @@ else
     echo "🎨 前端服务PID文件不存在"
 fi
 
-# 停止后端API服务
-if [ -f "$LOG_DIR/backend.pid" ]; then
-    API_PID=$(cat "$LOG_DIR/backend.pid")
+# 停止Go后端API服务
+if [ -f "$LOG_DIR/web-api.pid" ]; then
+    API_PID=$(cat "$LOG_DIR/web-api.pid")
     if ps -p $API_PID > /dev/null 2>&1; then
-        echo "🌐 停止后端API服务 (PID: $API_PID)..."
+        echo "🌐 停止Go后端API服务 (PID: $API_PID)..."
         kill $API_PID
         STOP_COUNT=$((STOP_COUNT + 1))
     else
-        echo "🌐 后端API服务未运行 (PID文件存在但进程不存在)"
+        echo "🌐 Go后端API服务未运行 (PID文件存在但进程不存在)"
     fi
-    rm -f "$LOG_DIR/backend.pid"
+    rm -f "$LOG_DIR/web-api.pid"
 else
-    echo "🌐 后端API服务PID文件不存在"
+    echo "🌐 Go后端API服务PID文件不存在"
 fi
 
 # 停止数据库服务
@@ -87,14 +87,14 @@ if [ ! -z "$FE_PROCESSES" ]; then
     STOP_COUNT=$((STOP_COUNT + 1))
 fi
 
-BACKEND_PROCESSES=$(ps aux | grep "uvicorn api.app:app" | grep -v grep | awk '{print $2}')
+BACKEND_PROCESSES=$(ps aux | grep "bin/web-api" | grep -v grep | awk '{print $2}')
 if [ ! -z "$BACKEND_PROCESSES" ]; then
-    echo "🌐 停止残留的后端进程: $BACKEND_PROCESSES"
+    echo "🌐 停止残留的Go后端进程: $BACKEND_PROCESSES"
     kill $BACKEND_PROCESSES 2>/dev/null
     STOP_COUNT=$((STOP_COUNT + 1))
 fi
 
-DATABASE_PROCESSES=$(ps aux | grep "database/service/database_service.py" | grep -v grep | awk '{print $2}')
+DATABASE_PROCESSES=$(ps aux | grep "bin/database-service" | grep -v grep | awk '{print $2}')
 if [ ! -z "$DATABASE_PROCESSES" ]; then
     echo "📊 停止残留的数据库进程: $DATABASE_PROCESSES"
     kill $DATABASE_PROCESSES 2>/dev/null

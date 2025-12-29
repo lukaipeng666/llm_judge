@@ -1,14 +1,15 @@
-# 🎯 LLM-Judge 大模型评测框架
+# 🎯 LLM Judge Go
 
 <div align="center">
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Framework](https://img.shields.io/badge/Framework-FastAPI-009688.svg)](https://fastapi.tiangolo.com)
+**一个强大的大语言模型评估与评分平台**
 
-*一个功能强大、易于使用的大语言模型自动化评测框架*
+[![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?logo=go)](https://golang.org/)
+[![React](https://img.shields.io/badge/react-18-61DAFB?logo=react)](https://reactjs.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-[快速开始](#-快速开始) • [功能特性](#-功能特性) • [使用指南](#-使用指南) • [API文档](#-api接口) • [常见问题](#-常见问题)
+[功能特性](#-功能特性) • [快速开始](#-快速开始) • [配置说明](#-配置说明) • [使用指南](#-使用指南) • [开发文档](#-开发文档)
 
 </div>
 
@@ -16,619 +17,434 @@
 
 ## 📖 项目简介
 
-LLM-Judge 是一个专为大规模语言模型（LLM）设计的自动化评测框架。该框架提供了完整的评测解决方案，从数据管理、模型调用、评分计算到结果展示，支持多种评分机制和并行处理，能够高效地评估模型在各种NLP任务上的性能表现。
+LLM Judge Go 是一个专业的大语言模型评估平台，提供完整的模型评估、任务管理和结果可视化功能。无论是研究者还是工程师，都可以通过本平台轻松进行LLM模型的质量评估和性能分析。
 
-### 🎯 核心价值
+### ✨ 核心亮点
 
-- **🚀 高效批量评测**：支持多线程并发，快速完成大规模数据集评测
-- **🔌 灵活模型接入**：兼容 OpenAI API 和 vLLM 本地部署模型
-- **📊 多维度评分**：支持 ROUGE、精确匹配、LLM 裁判等多种评分机制
-- **💾 断点续测**：支持检查点机制，任务中断后可从断点继续
-- **🎨 可视化界面**：提供现代化的 Web UI，轻松管理评测任务和查看结果
-- **🔧 插件化扩展**：支持自定义评分函数，灵活适配各种评测需求
-
----
-
-## 🏗️ 系统架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     Web UI (React)                      │
-│                    Port: 16386                          │
-└────────────────┬────────────────────────────────────────┘
-                 │
-┌────────────────▼────────────────────────────────────────┐
-│              Backend API (FastAPI)                      │
-│                  Port: 16385                            │
-├─────────────────────────────────────────────────────────┤
-│  • 任务管理    • 数据管理    • 用户认证                 │
-└────────────────┬────────────────────────────────────────┘
-                 │
-┌────────────────▼────────────────────────────────────────┐
-│           Database Service (SQLite)                     │
-│                  Port: 16384                            │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│              Evaluation Engine (Core)                   │
-├─────────────────────────────────────────────────────────┤
-│  • 数据加载    • 模型调用    • 批量处理                 │
-│  • 评分计算    • 结果生成    • 报告输出                 │
-└─────────────────────────────────────────────────────────┘
-```
+- 🚀 **高性能评估** - 支持批量并行评估，大幅提升评估效率
+- 🎨 **现代化界面** - 基于 React + Ant Design 的美观 Web UI
+- 🔧 **灵活配置** - 支持多种评分算法和自定义评分插件
+- 📊 **可视化报告** - 详细的评估报告和数据分析
+- 🛡️ **企业级架构** - 微服务设计，支持高并发和水平扩展
+- 💻 **双模式使用** - 支持 Web 界面和命令行两种使用方式
 
 ---
 
-## ✨ 功能特性
+## 🎨 功能特性
 
-### 1️⃣ 多模型支持
+### 🔍 模型评估
+- ✅ 支持多种 LLM 模型（OpenAI API 格式、VLLM 等）
+- ✅ 内置多种评分算法（ROUGE 等）
+- ✅ 自定义评分插件系统
+- ✅ 批量并行评估能力
+- ✅ JSONL 格式数据支持
 
-- ✅ **vLLM 本地部署**：支持本地部署的 vLLM 推理服务
-- ✅ **OpenAI 兼容 API**：兼容任何符合 OpenAI API 规范的模型服务
-- ✅ **多 API 负载均衡**：支持配置多个 API 地址实现负载分发
+### 🖥️ Web 管理界面
+- ✅ 直观的仪表板和任务管理
+- ✅ 实时任务状态监控
+- ✅ 数据管理和上传
+- ✅ 详细的评估报告展示
+- ✅ 用户认证和权限管理
 
-### 2️⃣ 丰富的评分机制
+### ⚙️ 后端服务
+- ✅ RESTful API 设计
+- ✅ JWT 用户认证
+- ✅ SQLite 数据存储
+- ✅ Redis 缓存支持
+- ✅ 优雅的服务管理脚本
 
-| 评分方式 | 适用场景 | 说明 |
-|---------|---------|------|
-| **ROUGE** | 文本摘要、生成任务 | 基于 n-gram 重叠的评估指标 |
-| **精确匹配** | 分类、标签任务 | 完全匹配或部分匹配评分 |
-| **LLM 裁判** | 开放式生成任务 | 使用更强的模型作为裁判评估 |
-| **自定义评分** | 特殊任务 | 通过插件系统注册自定义评分函数 |
-
-### 3️⃣ 并行处理与性能优化
-
-- 🚀 **多线程并发**：可配置工作线程数，充分利用计算资源
-- 💾 **断点续测**：定期保存检查点，支持从中断处继续评估
-- 📦 **批量处理**：自动批量处理大规模数据集
-- ⏱️ **超时控制**：可配置 API 调用超时时间，防止任务挂起
-
-### 4️⃣ 完善的 Web 管理界面
-
-- 📊 **仪表板**：实时查看评测任务状态和统计信息
-- 📁 **数据管理**：上传、管理评测数据集（支持 JSONL/CSV 格式）
-- 🎯 **任务管理**：创建、监控、管理评测任务
-- 📈 **结果展示**：可视化展示评测结果和 Badcase 分析
-- 📄 **报告导出**：支持导出 JSON、TXT 和 Badcase 报告
-
-### 5️⃣ 灵活的配置选项
-
-- 🎛️ **温度控制**：可调节生成温度（temperature）
-- 🎲 **采样参数**：支持 top-p 采样控制
-- 📏 **Token 限制**：可配置最大生成 token 数
-- 🎭 **角色选择**：支持选择不同的测试角色
-- 🎯 **Badcase 阈值**：可自定义 Badcase 判定阈值
+### 📈 数据分析
+- ✅ 多维度评估指标统计
+- ✅ 评估结果导出
+- ✅ 历史记录查询
+- ✅ 趋势分析图表
 
 ---
 
-## 📋 环境依赖
+## 🏗️ 项目架构
 
-### 系统要求
-
-- **Python**: 3.8 或更高版本
-- **Node.js**: 16+ (用于 Web 界面)
-- **Redis**: 6.0+ (用于流量控制和并发管理)
-- **操作系统**: Linux / macOS / Windows
-
-### Python 依赖包
-
-```txt
-openai>=1.0.0
-rouge_score>=0.1.2
-inputimeout>=1.0.0
-requests>=2.25.0
-fastapi>=0.104.0
-uvicorn>=0.24.0
-pydantic<2.0.0
-python-multipart>=0.0.6
-PyJWT>=2.8.0
-httpx>=0.25.0
-pyyaml>=6.0
-redis>=4.0.0
 ```
-
-### Redis 安装
-
-Redis 用于流量控制和并发管理，是系统的重要组件。请根据您的操作系统选择安装方式：
-
-#### macOS
-
-```bash
-# 使用 Homebrew 安装（推荐）
-brew install redis
-
-# 或从源码编译安装
-wget https://download.redis.io/redis-stable.tar.gz
-tar xvzf redis-stable.tar.gz
-cd redis-stable
-make
-# 编译后的 redis-server 位于 src/redis-server
+llm-judge_go/
+├── 📂 backend/              # Go 后端服务
+│   ├── cmd/                # 服务入口
+│   │   ├── database-service/    # 数据库服务
+│   │   └── web-api/             # Web API 服务
+│   ├── internal/           # 内部模块
+│   │   ├── api/            # API 处理器
+│   │   ├── core/           # 核心业务逻辑
+│   │   ├── model/          # 数据模型
+│   │   ├── repository/     # 数据访问层
+│   │   └── service/        # 服务层
+│   └── pkg/                # 公共包
+│
+├── 📂 frontend/            # React 前端应用
+│   ├── src/
+│   │   ├── components/     # 通用组件
+│   │   ├── pages/         # 页面组件
+│   │   ├── services/      # API 服务
+│   │   ├── stores/        # 状态管理
+│   │   └── layouts/       # 布局组件
+│   └── dist/              # 构建产物
+│
+├── 📂 llm_judge/           # Python 核心评估模块
+│   ├── data_load/         # 数据加载
+│   ├── function_register/ # 评分函数注册
+│   ├── call_model/        # 模型调用
+│   ├── batch/             # 批处理
+│   ├── score/             # 评分模块
+│   ├── result_gen/        # 结果生成
+│   └── messages/          # 消息处理
+│
+├── 📂 data/                # 数据存储目录
+├── 📂 logs/                # 日志文件目录
+├── 📄 config.yaml          # 配置文件
+├── 📄 main.py              # Python CLI 入口
+├── 📄 start.sh             # 服务启动脚本
+├── 📄 stop.sh              # 服务停止脚本
+└── 📄 requirements.txt     # Python 依赖
 ```
-
-#### Linux (Ubuntu/Debian)
-
-```bash
-# 使用 apt 安装（推荐）
-sudo apt update
-sudo apt install redis-server
-
-# 或从源码编译安装
-wget https://download.redis.io/redis-stable.tar.gz
-tar xvzf redis-stable.tar.gz
-cd redis-stable
-make
-sudo make install
-```
-
-#### Linux (CentOS/RHEL)
-
-```bash
-# 使用 yum 安装
-sudo yum install redis
-
-# 或从源码编译安装
-wget https://download.redis.io/redis-stable.tar.gz
-tar xvzf redis-stable.tar.gz
-cd redis-stable
-make
-sudo make install
-```
-
-#### 从源码编译（通用方法）
-
-如果系统包管理器不可用，可以从源码编译：
-
-```bash
-# 下载 Redis 源码
-wget https://download.redis.io/redis-stable.tar.gz
-tar xvzf redis-stable.tar.gz
-cd redis-stable
-
-# 编译
-make
-
-# 编译后的可执行文件位于 src/ 目录
-# - src/redis-server (Redis 服务器)
-# - src/redis-cli (Redis 客户端)
-
-# 可选：安装到系统路径
-sudo make install
-```
-
-**注意**：
-- 如果从源码编译且未安装到系统路径，启动脚本会自动在常见位置（如 `/tmp/redis-stable/src/`）查找 `redis-server`
-- 确保 `redis-server` 和 `redis-cli` 具有执行权限：`chmod +x src/redis-server src/redis-cli`
 
 ---
 
 ## 🚀 快速开始
 
-### 安装步骤
+### 📋 环境要求
+
+- **Python**: 3.10+
+- **Go**: 1.21+
+- **Node.js**: 16+
+- **Redis**: 6.0+
+
+### 🔧 安装步骤
+
+#### 1️⃣ 克隆项目
 
 ```bash
-# 1. 克隆项目
-git clone ssh://git@code.in.wezhuiyi.com:60022/nlp-algorithm/bowenability/boweneval.git
-cd boweneval
-
-# 2. 切换到稳定版本
-git checkout v.0.1.0
-
-# 3. 安装 Redis（如果尚未安装）
-# macOS: brew install redis
-# Linux: sudo apt install redis-server 或 sudo yum install redis
-# 或参考上方的 Redis 安装说明从源码编译
-
-# 4. 安装 Python 依赖
-pip install -r requirements.txt
-
-# 5. 安装前端依赖
-cd web-ui/frontend
-npm install
-cd ../..
+git clone <repository-url>
+cd llm-judge_go
 ```
 
-### 启动服务
-
-#### 方式一：一键启动所有服务（推荐）
+#### 2️⃣ 安装 Python 依赖
 
 ```bash
+pip install -r requirements.txt
+```
+
+#### 3️⃣ 安装前端依赖
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+#### 4️⃣ 配置服务
+
+编辑 `config.yaml` 文件，配置必要的参数：
+
+```yaml
+# LLM 服务配置
+llm_service:
+  api_url: "http://localhost:8000/v1"
+  api_key: "your-api-key"
+  model: "/path/to/your/model"
+
+# 管理员账户
+admin:
+  username: "admin"
+  password_hash: "your-password-hash"  # SHA256 加密
+```
+
+#### 5️⃣ 启动服务
+
+```bash
+# 一键启动所有服务
 bash start.sh
 ```
 
-启动后会自动运行：
-- 🔴 Redis 服务 (端口 6379，用于流量控制)
-- 📊 数据库服务 (端口 16384)
-- 🌐 后端 API (端口 16385)
-- 🎨 前端界面 (端口 16386)
+启动脚本会自动启动：
+- 🗄️ Redis 服务 (端口: 16387)
+- 🗃️ Go 数据库服务 (端口: 16384)
+- 🌐 Go Web API 服务 (端口: 16385)
+- 🎨 React 前端服务 (端口: 16386)
 
-**注意**：启动脚本会自动检测并启动 Redis。如果 Redis 未安装或未找到，系统仍可运行，但流量控制功能将不可用。
+#### 6️⃣ 访问应用
 
-#### 方式二：单独启动服务
+打开浏览器访问：`http://localhost:16386`
 
-```bash
-# 仅启动数据库服务
-bash web-ui/start_database_only.sh
+默认管理员账户：
+- 用户名：`admin`
+- 密码：查看 `config.yaml` 中的配置
 
-# 仅启动后端服务
-bash web-ui/start_backend_only.sh
+---
 
-# 仅启动前端服务
-bash web-ui/start_frontend_only.sh
-```
+## ⚙️ 配置说明
 
-### 访问地址
+### 📄 config.yaml 配置项
 
-| 服务 | 地址 | 说明 |
-|------|------|------|
-| 🎨 **前端界面** | http://localhost:16386 | Web UI 管理界面 |
-| 🌐 **后端 API** | http://localhost:16385 | RESTful API 服务 |
-| 📊 **数据库服务** | http://localhost:16384 | 数据库 API 服务 |
-| 🔴 **Redis 服务** | localhost:6379 | 流量控制和并发管理 |
-| 📖 **后端 API 文档** | http://localhost:16385/docs | Swagger 文档 |
-| 📖 **数据库 API 文档** | http://localhost:16384/docs | Swagger 文档 |
+```yaml
+# ==================== 服务端口配置 ====================
+database_service:
+  port: 16384              # 数据库服务端口
 
-### 停止服务
+web_service:
+  port: 16385              # Web API 服务端口
 
-```bash
-bash stop.sh
+frontend_service:
+  port: 16386              # 前端服务端口
+
+redis_service:
+  port: 16387              # Redis 缓存服务端口
+  host: "localhost"
+
+# ==================== LLM 服务配置 ====================
+llm_service:
+  api_url: "http://localhost:8000/v1"  # LLM API 地址
+  api_key: "sk-xxx"                     # API 密钥
+  model: "/path/to/model"               # 模型路径
+  timeout: 60                           # 请求超时时间（秒）
+  max_retries: 3                        # 最大重试次数
+
+# ==================== 管理员配置 ====================
+admin:
+  username: "admin"                     # 管理员用户名
+  password_hash: "xxx"                  # SHA256 加密的密码
+
+# ==================== JWT 配置 ====================
+jwt:
+  secret_key: "llm-judge-secret-key"   # JWT 密钥
+  expire_hours: 24                      # Token 过期时间（小时）
+
+# ==================== 评估配置 ====================
+evaluation:
+  max_workers: 8                        # 最大并行工作线程数
+  batch_size: 32                        # 批处理大小
+  default_scoring: "rouge"              # 默认评分算法
 ```
 
 ---
 
 ## 📚 使用指南
 
-### 通过 Web UI 进行评测（推荐）
+### 🌐 Web 界面使用
 
-1. **登录系统**
-   - 访问 http://localhost:16386
-   - 使用默认账号登录或注册新账号
+#### 1. 登录系统
+- 访问 `http://localhost:16386`
+- 使用管理员账户登录
 
-2. **上传数据集**
-   - 进入「数据管理」页面
-   - 上传 JSONL 或 CSV 格式的测试数据
-   - 系统支持自动格式转换
+#### 2. 创建评估任务
+- 导航到「评估页面」
+- 上传 JSONL 格式的测试数据
+- 选择评估模型和评分算法
+- 提交任务
 
-3. **创建评测任务**
-   - 进入「评测任务」页面
-   - 填写任务配置：
-     - 选择数据集
-     - 配置模型 API
-     - 选择评分函数
-     - 设置并发参数
+#### 3. 查看任务状态
+- 在「任务页面」查看所有任务
+- 实时监控任务进度
+- 查看任务日志
 
-4. **查看结果**
-   - 在「结果」页面查看评测进度
-   - 查看详细报告和 Badcase 分析
-   - 导出评测报告
+#### 4. 查看评估报告
+- 在「报告页面」查看评估结果
+- 下载详细报告
+- 分析评估数据
 
----
+### 💻 命令行使用
 
-### CSV 格式
-
-系统支持 CSV 上传，会自动转换为 JSONL 格式：
-
-```csv
-meta_description,human,assistant
-请回答以下问题,什么是人工智能？,人工智能是...
-翻译下列句子,Hello World,你好，世界
-```
-
----
-
-## ⚙️ 配置说明
-
-### 配置文件：`web-ui/config.yaml`
-
-```yaml
-# 数据库服务配置
-database_service:
-  host: "0.0.0.0"
-  port: 16384
-  database_url: "llm_judge.db"
-
-# Web API 服务配置
-web_service:
-  host: "0.0.0.0"
-  port: 16385
-  database_service_url: "http://localhost:16384"
-
-# 前端服务配置
-frontend_service:
-  port: 16386
-  host: "0.0.0.0"
-
-# Redis服务配置
-redis_service:
-  host: "localhost"
-  port: 6379
-  db: 0
-  max_wait_time: 300  # 最大等待时间（秒），超过并发限制时的等待超时
-```
-
-### 自定义评分函数
-
-创建自定义评分模块（例如 `my_scoring.py`）：
-
-```python
-from function_register.plugin import register_scoring_function
-
-@register_scoring_function("my_custom_scorer")
-def my_custom_scorer(prediction, reference, **kwargs):
-    """
-    自定义评分函数
-    
-    Args:
-        prediction: 模型预测输出
-        reference: 参考答案
-        **kwargs: 其他参数
-    
-    Returns:
-        float: 评分结果 (0-1)
-    """
-    # 实现你的评分逻辑
-    score = compute_similarity(prediction, reference)
-    return score
-```
-
----
-
-## 🎨 支持的数据集
-
-框架支持多种中文 NLP 任务的数据集评估：
-
-### 📖 阅读理解与问答
-- **CMRC2018** - 中文机器阅读理解
-- **DRCD** - 繁体中文阅读理解
-- **C³** - 中文多选阅读理解
-- **CHID** - 成语填空
-
-### 📝 文本分类
-- **TNEWS** - 今日头条新闻分类
-- **IFLYTEK** - 长文本分类
-- **AFQMC** - 蚂蚁金融问题匹配
-
-### 💬 自然语言推理
-- **OCNLI** - 中文自然语言推理
-- **CMNLI** - 中文多类别自然语言推理
-
-### 🎭 情感分析
-- **WAIMAI** - 外卖评论情感分析
-- **OCEMOTION** - 中文情感分类
-
-### 🔤 命名实体识别
-- **CLUENER** - 细粒度命名实体识别
-- **CMeEE** - 中文医学实体识别
-
-### 🧩 其他任务
-- **CLUEWSC2020** - 代词消解
-- **CSL** - 论文关键词识别
-- **BUSTM** - 小布助手语义匹配
-- **CHID** - 成语填空
-
-### 🌟 指令遵循与对话
-- **MTBench101** - 多轮对话评测
-- **LIVEBENCH** - 实时能力评估
-
-### 🏥 垂直领域
-- **医疗领域**：CMB, CMedQA, CHIP 等
-- **金融领域**：FinQA, FinRE 等
-- **法律领域**：CAIL, LegalQA 等
-
----
-
-## 🛠️ 开发指南
-
-### 项目结构
-
-```
-boweneval/
-├── main.py                    # 主程序入口
-├── requirements.txt           # Python 依赖
-├── start.sh                   # 启动脚本
-├── stop.sh                    # 停止脚本
-│
-├── batch/                     # 批量处理模块
-│   └── batch_process.py       # 并行评估逻辑
-│
-├── call_model/                # 模型调用模块
-│   └── model_call.py          # API 调用封装
-│
-├── data_load/                 # 数据加载模块
-│   └── load_and_save.py       # 数据读取和保存
-│
-├── messages/                  # 消息处理模块
-│   └── messages_process.py    # 消息格式化
-│
-├── score/                     # 评分模块
-│   └── get_score.py           # 评分函数获取
-│
-├── function_register/         # 插件注册模块
-│   └── plugin.py              # 评分函数注册器
-│
-├── result_gen/                # 结果生成模块
-│   └── report.py              # 报告生成和聚合
-│
-└── web-ui/                    # Web 界面
-    ├── config.yaml            # 配置文件
-    ├── backend/               # 后端服务
-    │   ├── api/               # API 接口
-    │   │   ├── app.py         # FastAPI 应用
-    │   │   ├── auth.py        # 认证逻辑
-    │   │   └── csv_to_jsonl.py
-    │   └── database/          # 数据库服务
-    │       ├── client/        # 数据库客户端
-    │       └── service/       # 数据库服务
-    │
-    └── frontend/              # 前端界面
-        ├── src/
-        │   ├── pages/         # 页面组件
-        │   ├── services/      # API 服务
-        │   └── stores/        # 状态管理
-        └── package.json
-```
-
-### 添加新的评分函数
-
-1. 在 `function_register/plugin.py` 中添加新函数：
-
-```python
-@register_scoring_function("new_scorer")
-def new_scoring_function(prediction, reference, **kwargs):
-    # 实现评分逻辑
-    return score
-```
-
-2. 或创建独立的评分模块并在运行时加载
-
-### 扩展数据加载器
-
-修改 `data_load/load_and_save.py` 以支持新的数据格式
-
-### 自定义报告格式
-
-修改 `result_gen/report.py` 中的报告生成逻辑
-
----
-
-## ❓ 常见问题
-
-### Q: 如何修改端口号？
-
-**A:** 编辑 `web-ui/config.yaml` 文件，修改对应服务的端口配置。
-
-### Q: 支持哪些模型 API？
-
-**A:** 支持任何兼容 OpenAI API 规范的服务，包括：
-- OpenAI 官方 API
-- Azure OpenAI
-- 本地部署的 vLLM
-- FastChat
-- Ollama（需配置兼容接口）
-
-### Q: 如何查看日志？
-
-**A:** 
+#### 基础评估
 
 ```bash
-# 查看所有日志
-tail -f web-ui/logs/*.log
-
-# 查看特定服务日志
-tail -f web-ui/logs/backend.log
-tail -f web-ui/logs/database.log
-tail -f web-ui/logs/frontend.log
+python main.py \
+  --data_file test.jsonl \
+  --model Qwen-1.8B-Chat
 ```
 
-### Q: 数据库文件在哪里？
-
-**A:** SQLite 数据库文件位于 `web-ui/backend/database/service/llm_judge.db`
-
-### Q: 如何重置数据库？
-
-**A:** 
+#### 批量评估
 
 ```bash
-# 停止所有服务
-bash stop.sh
+python main.py \
+  --data_file data.jsonl \
+  --max_workers 8 \
+  --batch_size 32
+```
 
-# 删除数据库文件
-rm web-ui/backend/database/service/llm_judge.db
+#### 自定义评分
 
-# 重新启动服务（会自动创建新数据库）
+```bash
+python main.py \
+  --data_file test.jsonl \
+  --scoring custom \
+  --scoring_module my_scoring.py
+```
+
+#### 指定 LLM API
+
+```bash
+python main.py \
+  --data_file test.jsonl \
+  --api_url http://localhost:8000/v1 \
+  --api_key sk-xxx \
+  --model /path/to/model
+```
+
+### 📝 数据格式
+
+测试数据应为 JSONL 格式，每行一个 JSON 对象：
+
+```json
+{
+  "id": "test_001",
+  "prompt": "什么是人工智能？",
+  "reference": "人工智能是计算机科学的一个分支...",
+  "metadata": {
+    "category": "科学",
+    "difficulty": "简单"
+  }
+}
+```
+
+---
+
+## 🔧 开发文档
+
+### 🛠️ 技术栈
+
+#### 后端
+- **语言**: Go 1.21+
+- **框架**: Gin Web Framework
+- **数据库**: SQLite
+- **缓存**: Redis
+- **认证**: JWT
+
+#### 前端
+- **框架**: React 18
+- **UI 库**: Ant Design 5.0
+- **状态管理**: Zustand
+- **HTTP 客户端**: Axios
+- **构建工具**: Vite
+
+#### 核心模块
+- **语言**: Python 3.10+
+- **LLM 集成**: OpenAI API 格式
+- **评分算法**: ROUGE、自定义算法
+
+### 🔄 开发工作流
+
+#### 启动开发环境
+
+```bash
+# 启动所有服务
 bash start.sh
+
+# 或分别启动
+python main.py --dev              # Python 开发模式
+cd backend && go run cmd/web-api/main.go  # Go 后端
+cd frontend && npm run dev        # React 前端
 ```
 
-### Q: 前端无法连接后端？
+#### 停止服务
 
-**A:** 检查以下几点：
-1. 确认所有服务都已启动
-2. 检查防火墙设置
-3. 查看后端日志排查错误
-4. 确认配置文件中的端口号正确
+```bash
+bash stop.sh
+```
 
-### Q: Redis 未找到或启动失败？
+### 📦 构建生产版本
 
-**A:** 
-1. **检查 Redis 是否已安装**：
-   ```bash
-   # 检查系统路径中是否有 redis-server
-   which redis-server
-   
-   # 或检查常见位置
-   ls -la /tmp/redis-stable/src/redis-server
-   ```
+#### 后端构建
 
-2. **如果从源码编译但未安装到系统路径**：
-   - 确保 `redis-server` 和 `redis-cli` 在 `src/` 目录中
-   - 确保它们具有执行权限：`chmod +x src/redis-server src/redis-cli`
-   - 启动脚本会自动在 `/tmp/redis-stable/src/` 等常见位置查找
+```bash
+cd backend
+go build -o bin/web-api cmd/web-api/main.go
+go build -o bin/database-service cmd/database-service/main.go
+```
 
-3. **手动安装 Redis**：
-   - macOS: `brew install redis`
-   - Ubuntu/Debian: `sudo apt install redis-server`
-   - CentOS/RHEL: `sudo yum install redis`
+#### 前端构建
 
-4. **如果 Redis 未安装**：
-   - 系统仍可运行，但流量控制功能将不可用
-   - 建议安装 Redis 以获得完整的并发控制功能
+```bash
+cd frontend
+npm run build
+```
+
+### 🧪 测试
+
+```bash
+# 后端测试
+cd backend
+go test ./...
+
+# 前端测试
+cd frontend
+npm test
+```
 
 ---
 
-## 🔍 性能优化建议
+## 📖 API 文档
 
-### 1. 并发优化
+### 认证接口
 
-```bash
-# 根据 CPU 核心数和 API 限制调整工作线程
-python main.py --max_workers 16  # 适用于高性能服务器
+#### POST /api/auth/login
+用户登录
+
+**请求体：**
+```json
+{
+  "username": "admin",
+  "password": "password"
+}
 ```
 
-### 2. 批量大小优化
-
-调整 `--checkpoint_interval` 平衡性能和可靠性：
-- 较小值（如 10）：更频繁保存，更安全但稍慢
-- 较大值（如 100）：更快但中断时丢失更多进度
-
-### 3. 超时设置
-
-```bash
-# 为慢速模型增加超时时间
-python main.py --timeout 1200  # 20 分钟
+**响应：**
+```json
+{
+  "code": 200,
+  "data": {
+    "token": "jwt-token",
+    "user": {
+      "id": 1,
+      "username": "admin"
+    }
+  }
+}
 ```
 
-### 4. 采样优化
+### 任务管理接口
 
-```bash
-# 快速测试时使用小样本
-python main.py --sample-size 100  # 只测试前 100 条
-```
+#### POST /api/task/create
+创建评估任务
+
+#### GET /api/task/list
+获取任务列表
+
+#### GET /api/task/:id
+获取任务详情
+
+### 数据管理接口
+
+#### POST /api/data/upload
+上传测试数据
+
+#### GET /api/data/list
+获取数据列表
+
+更多 API 文档请参考：[API 详细文档](docs/api.md)
 
 ---
 
 ## 🤝 贡献指南
 
-我们欢迎任何形式的贡献！
+欢迎贡献代码！请遵循以下步骤：
 
-### 如何贡献
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 开启 Pull Request
 
-1. **Fork 项目**
-2. **创建特性分支** (`git checkout -b feature/AmazingFeature`)
-3. **提交更改** (`git commit -m 'Add some AmazingFeature'`)
-4. **推送到分支** (`git push origin feature/AmazingFeature`)
-5. **提交 Pull Request**
+### 📋 代码规范
 
-### 代码规范
-
-- 遵循 PEP 8 Python 代码规范
-- 添加必要的注释和文档字符串
-- 编写单元测试
-- 确保所有测试通过
-
-### 问题反馈
-
-- 使用 Issue 报告 Bug
-- 使用 Issue 提出新功能建议
-- 详细描述问题和复现步骤
+- **Go**: 遵循 [Effective Go](https://golang.org/doc/effective_go) 规范
+- **Python**: 遵循 [PEP 8](https://pep8.org/) 规范
+- **React**: 遵循 [Airbnb JavaScript Style Guide](https://github.com/airbnb/javascript)
 
 ---
 
@@ -638,31 +454,30 @@ python main.py --sample-size 100  # 只测试前 100 条
 
 ---
 
-## 🙏 致谢
+## 📞 联系方式
 
-感谢所有为这个项目做出贡献的开发者和用户！
-
-特别感谢：
-- OpenAI 提供的 API 规范
-- vLLM 项目提供的高效推理引擎
-- FastAPI 提供的优秀 Web 框架
-- React 和 Vite 提供的前端开发工具
+- 💼 **项目主页**: [GitHub Repository](https://github.com/your-username/llm-judge_go)
+- 🐛 **问题反馈**: [Issues](https://github.com/your-username/llm-judge_go/issues)
+- 📧 **邮箱**: your-email@example.com
 
 ---
 
-## 📧 联系方式
+## 🙏 致谢
 
-如有问题或建议，请通过以下方式联系：
+感谢所有为本项目做出贡献的开发者！
 
-- **Issue**: [项目 Issue 页面](ssh://git@code.in.wezhuiyi.com:60022/nlp-algorithm/bowenability/boweneval.git)
-- **Email**: 项目维护者邮箱
+特别感谢以下开源项目：
+- [Gin](https://github.com/gin-gonic/gin)
+- [React](https://reactjs.org/)
+- [Ant Design](https://ant.design/)
+- [Zustand](https://github.com/pmndrs/zustand)
 
 ---
 
 <div align="center">
 
-**⭐ 如果这个项目对你有帮助，请给我们一个 Star！**
+**⭐ 如果这个项目对你有帮助，请给个 Star！**
 
-Made with ❤️ by NLP Algorithm Team
+Made with ❤️ by LLM Judge Team
 
 </div>

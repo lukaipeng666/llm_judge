@@ -6,19 +6,36 @@
 
 import argparse
 import os
-from data_load.load_and_save import load_jsonl, load_custom_scoring_module
-from function_register.plugin import SCORING_FUNCTIONS_plugin, initialize_langdetect_profiles
-from result_gen.report import generate_report, aggregate_results
-from score.get_score import get_scoring_function
-from batch.batch_process import batch_evaluate
+import yaml
+from llm_judge.data_load.load_and_save import load_jsonl, load_custom_scoring_module
+from llm_judge.function_register.plugin import SCORING_FUNCTIONS_plugin, initialize_langdetect_profiles
+from llm_judge.result_gen.report import generate_report, aggregate_results
+from llm_judge.score.get_score import get_scoring_function
+from llm_judge.batch.batch_process import batch_evaluate
+
+def get_config_defaults():
+    """
+    从配置文件中读取默认值
+    """
+    config_file = "config.yaml"
+    if os.path.exists(config_file):
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        return config
+    return {}
 
 def parse_args():
     """
     解析命令行参数
     """
     parser = argparse.ArgumentParser(description='大模型测评脚本')
-    parser.add_argument('--api_urls', nargs='+', default="http://localhost:8000/generate/chat/completions", help='兼容OpenAI的地址')
-    parser.add_argument('--model', default="Qwen/Qwen-1.8B-Chat", help='vllm模型名称')
+    # 从配置文件获取默认值，如果配置文件不存在则使用默认值
+    config = get_config_defaults()
+    llm_config = config.get('llm_service', {})
+    default_api_urls = llm_config.get('api_url', "http://localhost:8000/generate/chat/completions")
+    parser.add_argument('--api_urls', nargs='+', default=default_api_urls, help='兼容OpenAI的地址')
+    default_model = llm_config.get('model', "Qwen/Qwen-1.8B-Chat")
+    parser.add_argument('--model', default=default_model, help='vllm模型名称')
     parser.add_argument('--data_file', default=None, help='测试数据文件路径')
     parser.add_argument('--data_id', type=int, default=None, help='数据库中的数据ID')
     parser.add_argument('--scoring', default='rouge', help='评分函数名称')
@@ -40,10 +57,12 @@ def parse_args():
     parser.add_argument('--role', type=str, default="assistant", help='选择指定的测试角色')
     parser.add_argument('--timeout', type=int, default=600, help='API调用超时时间（秒）')
     parser.add_argument('--max-tokens', type=int, default=16384, help='API调用超时时间（秒）')
-    parser.add_argument('--api_key', type=str, default="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", help='API KEY')
+    default_api_key = llm_config.get('api_key', "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+    parser.add_argument('--api_key', type=str, default=default_api_key, help='API KEY')
     parser.add_argument('--is_vllm', action='store_true', default=False, help='是否使用vllm')
     parser.add_argument('--temperature', type=float, default=0.0, help='生成温度')
     parser.add_argument('--top-p', type=float, default=1.0, help='Top P采样参数')
+    parser.add_argument('--auth_token', type=str, default=None, help='JWT token for backend API authentication')
 
     return parser.parse_args()
 
@@ -120,8 +139,8 @@ def main():
     
     # 批量评估
     results, badcases = batch_evaluate(
-        test_data, 
-        args.api_urls, 
+        test_data,
+        args.api_urls,
         scoring_func,
         max_workers=args.max_workers,
         badcase_threshold=args.badcase_threshold,
@@ -137,7 +156,8 @@ def main():
         is_vllm=args.is_vllm,
         temperature=getattr(args, 'temperature', 0.0),
         top_p=getattr(args, 'top_p', 1.0),
-        progress_callback=progress_callback
+        progress_callback=progress_callback,
+        auth_token=getattr(args, 'auth_token', None)
     )
 
     # 汇总结果

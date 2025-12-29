@@ -6,14 +6,14 @@ echo "🚀 启动LLM Judge所有服务"
 echo "========================================="
 
 # 检查是否在正确的目录
-if [ ! -f "web-ui/backend/database/service/database_service.py" ] || [ ! -f "web-ui/frontend/package.json" ]; then
+if [ ! -f "config.yaml" ] || [ ! -d "backend/cmd/web-api" ]; then
     echo "❌ Error: 请在项目根目录下运行此脚本"
     echo "   使用方法: bash start.sh"
     exit 1
 fi
 
 # 从 config.yaml 读取端口配置
-CONFIG_FILE="web-ui/config.yaml"
+CONFIG_FILE="config.yaml"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "❌ Error: 配置文件 $CONFIG_FILE 不存在"
     exit 1
@@ -79,14 +79,14 @@ fi
 
 echo "📋 从配置文件读取的端口:"
 echo "   - 数据库服务: $DB_PORT"
-echo "   - 后端API服务: $WEB_PORT"
+echo "   - Go后端API服务: $WEB_PORT"
 echo "   - 前端服务: $FE_PORT"
 echo ""
 
 # 端口检测和清理
 echo "🔍 检测端口占用情况..."
 PORTS=($DB_PORT $WEB_PORT $FE_PORT)
-PORT_NAMES=("数据库服务" "后端API服务" "前端开发服务器")
+PORT_NAMES=("数据库服务" "Go后端API服务" "前端开发服务器")
 for i in "${!PORTS[@]}"; do
     PORT=${PORTS[$i]}
     NAME=${PORT_NAMES[$i]}
@@ -109,7 +109,7 @@ done
 echo ""
 
 # 创建日志目录
-LOG_DIR="./web-ui/logs"
+LOG_DIR="./logs"
 mkdir -p "$LOG_DIR"
 
 # 获取Redis配置
@@ -183,9 +183,9 @@ if [ -n "$REDIS_SERVER" ]; then
         fi
     fi
     
-    # Redis服务器日志输出到backend.log
+    # Redis服务器日志输出到redis.log
     # 禁用持久化：--save "" 禁用RDB快照，--appendonly no 禁用AOF
-    nohup "$REDIS_SERVER" --port $REDIS_PORT --save "" --appendonly no --daemonize no >> "$LOG_DIR/backend.log" 2>&1 &
+    nohup "$REDIS_SERVER" --port $REDIS_PORT --save "" --appendonly no --daemonize no >> "$LOG_DIR/redis.log" 2>&1 &
     REDIS_SERVER_PID=$!
     
     # 等待Redis启动
@@ -230,10 +230,8 @@ fi
 
 # 启动数据库服务
 echo "📊 启动数据库服务..."
-cd web-ui/backend
-nohup python3 -m uvicorn database.service.database_service:app --host 0.0.0.0 --port $DB_PORT > "../logs/database.log" 2>&1 &
+nohup ./backend/bin/database-service --port $DB_PORT > "$LOG_DIR/database.log" 2>&1 &
 DB_PID=$!
-cd ../..
 
 # 等待数据库服务启动（增强的健康检查）
 echo "⏳ 等待数据库服务启动..."
@@ -255,28 +253,38 @@ while [ $attempt -lt $max_attempts ]; do
     sleep 1
 done
 
-# 启动后端API服务
-echo "🌐 启动后端API服务..."
-cd web-ui/backend
-export PYTHONPATH="$PWD/../..:$PYTHONPATH"
-nohup python3 -m uvicorn api.app:app --host 0.0.0.0 --port $WEB_PORT > "../logs/backend.log" 2>&1 &
-API_PID=$!
-cd ../..
+# 启动Go后端API服务
+echo "🌐 启动Go后端API服务..."
 
-# 等待后端服务启动（增强的健康检查）
-echo "⏳ 等待后端API服务启动..."
+# 检查二进制文件是否存在
+if [ ! -f "./backend/bin/web-api" ]; then
+    echo "⚠️  Go二进制文件不存在，正在编译..."
+    export PATH=$PATH:/usr/local/go/bin
+    cd backend && go build -o bin/web-api cmd/web-api/main.go && cd ..
+    if [ $? -ne 0 ]; then
+        echo "❌ Go编译失败，请检查Go环境"
+        exit 1
+    fi
+    echo "✅ Go编译成功"
+fi
+
+nohup ./backend/bin/web-api > "$LOG_DIR/web-api.log" 2>&1 &
+API_PID=$!
+
+# 等待Go后端服务启动（增强的健康检查）
+echo "⏳ 等待Go后端API服务启动..."
 max_attempts=30
 attempt=0
 while [ $attempt -lt $max_attempts ]; do
     if curl -s http://localhost:$WEB_PORT/ > /dev/null 2>&1; then
-        echo "✅ 后端API服务启动成功 (PID: $API_PID)"
+        echo "✅ Go后端API服务启动成功 (PID: $API_PID)"
         break
     fi
     attempt=$((attempt + 1))
     if [ $attempt -eq $max_attempts ]; then
-        echo "❌ 后端API服务启动失败 (超过30秒等待)"
+        echo "❌ Go后端API服务启动失败 (超过30秒等待)"
         echo "📋 错误日志:"
-        tail -20 "$LOG_DIR/backend.log"
+        tail -20 "$LOG_DIR/web-api.log"
         kill $DB_PID $API_PID 2>/dev/null
         exit 1
     fi
@@ -285,14 +293,14 @@ done
 
 # 启动前端开发服务器
 echo "🎨 启动前端开发服务器..."
-cd web-ui/frontend
+cd frontend
 nohup npm run dev -- --host 0.0.0.0 --port $FE_PORT > "../logs/frontend.log" 2>&1 &
 FE_PID=$!
-cd ../..
+cd ..
 
 # 保存PID到文件
 echo "$DB_PID" > "$LOG_DIR/database.pid"
-echo "$API_PID" > "$LOG_DIR/backend.pid"
+echo "$API_PID" > "$LOG_DIR/web-api.pid"
 echo "$FE_PID" > "$LOG_DIR/frontend.pid"
 
 # 获取本机局域网IP
@@ -312,7 +320,7 @@ echo "📊 数据库服务: http://localhost:$DB_PORT"
 echo "   - API文档: http://localhost:$DB_PORT/docs"
 echo "   - 健康检查: http://localhost:$DB_PORT/health"
 echo ""
-echo "🌐 后端API服务: http://localhost:$WEB_PORT"
+echo "🌐 Go后端API服务: http://localhost:$WEB_PORT"
 echo "   - API文档: http://localhost:$WEB_PORT/docs"
 echo ""
 echo "🎨 前端界面:"
@@ -324,9 +332,9 @@ if [ -f "$LOG_DIR/redis.pid" ]; then
     echo "   - Redis: $(cat $LOG_DIR/redis.pid)"
 fi
 echo "   - 数据库: $DB_PID"
-echo "   - 后端API: $API_PID"
+echo "   - Go后端API: $API_PID"
 echo "   - 前端: $FE_PID"
 echo ""
 echo "🛑 停止服务请运行: bash stop.sh"
-echo "📋 查看日志: tail -f web-ui/logs/*.log"
+echo "📋 查看日志: tail -f logs/*.log"
 echo "========================================="
