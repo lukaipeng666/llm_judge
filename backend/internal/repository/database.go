@@ -3,6 +3,8 @@ package repository
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -18,6 +20,12 @@ var (
 
 // InitDB initializes the database connection and creates tables
 func InitDB(dbPath string) error {
+	// Ensure data directory exists
+	dbDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return fmt.Errorf("failed to create database directory: %w", err)
+	}
+
 	var err error
 	once.Do(func() {
 		db, err = sql.Open("sqlite3", dbPath)
