@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/wzyjerry/llm-judge/internal/model"
@@ -13,15 +14,21 @@ func CreateModelConfig(config *model.ModelConfigCreate) (int, error) {
 	now := time.Now().Format(time.RFC3339)
 	apiUrlsJSON, _ := json.Marshal(config.APIUrls)
 
+	// Set default is_vllm to 1 if not provided
+	isVLLM := config.IsVLLM
+	if isVLLM != 0 && isVLLM != 1 {
+		isVLLM = 1
+	}
+
 	query := `
-		INSERT INTO model_configs (model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+		INSERT INTO model_configs (model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, is_vllm, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
 	`
 
 	result, err := db.Exec(query,
 		config.ModelName, string(apiUrlsJSON), config.APIKey,
 		config.Temperature, config.TopP, config.MaxTokens,
-		config.Timeout, config.MaxConcurrency, config.Description, now, now)
+		config.Timeout, config.MaxConcurrency, config.Description, isVLLM, now, now)
 	if err != nil {
 		return 0, err
 	}
@@ -37,7 +44,7 @@ func CreateModelConfig(config *model.ModelConfigCreate) (int, error) {
 // GetAllModelConfigs returns all model configs
 func GetAllModelConfigs(includeInactive bool) ([]model.ModelConfig, error) {
 	query := `
-		SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, created_at, updated_at
+		SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, is_vllm, created_at, updated_at
 		FROM model_configs
 	`
 
@@ -62,7 +69,7 @@ func GetAllModelConfigs(includeInactive bool) ([]model.ModelConfig, error) {
 			&config.ID, &config.ModelName, &apiUrlsStr, &apiKeyStr,
 			&config.Temperature, &config.TopP, &config.MaxTokens,
 			&config.Timeout, &config.MaxConcurrency, &config.Description,
-			&config.IsActive, &config.CreatedAt, &config.UpdatedAt,
+			&config.IsActive, &config.IsVLLM, &config.CreatedAt, &config.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -87,7 +94,7 @@ func GetAllModelConfigs(includeInactive bool) ([]model.ModelConfig, error) {
 // GetModelConfigByID returns a model config by ID
 func GetModelConfigByID(configID int) (*model.ModelConfig, error) {
 	query := `
-		SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, created_at, updated_at
+		SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, is_vllm, created_at, updated_at
 		FROM model_configs WHERE id = ?
 	`
 
@@ -98,7 +105,7 @@ func GetModelConfigByID(configID int) (*model.ModelConfig, error) {
 		&config.ID, &config.ModelName, &apiUrlsStr, &apiKeyStr,
 		&config.Temperature, &config.TopP, &config.MaxTokens,
 		&config.Timeout, &config.MaxConcurrency, &config.Description,
-		&config.IsActive, &config.CreatedAt, &config.UpdatedAt,
+		&config.IsActive, &config.IsVLLM, &config.CreatedAt, &config.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -124,7 +131,7 @@ func GetModelConfigByID(configID int) (*model.ModelConfig, error) {
 // GetModelConfigByName returns a model config by name
 func GetModelConfigByName(modelName string) (*model.ModelConfig, error) {
 	query := `
-		SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, created_at, updated_at
+		SELECT id, model_name, api_urls, api_key, temperature, top_p, max_tokens, timeout, max_concurrency, description, is_active, is_vllm, created_at, updated_at
 		FROM model_configs WHERE model_name = ?
 	`
 
@@ -135,7 +142,7 @@ func GetModelConfigByName(modelName string) (*model.ModelConfig, error) {
 		&config.ID, &config.ModelName, &apiUrlsStr, &apiKeyStr,
 		&config.Temperature, &config.TopP, &config.MaxTokens,
 		&config.Timeout, &config.MaxConcurrency, &config.Description,
-		&config.IsActive, &config.CreatedAt, &config.UpdatedAt,
+		&config.IsActive, &config.IsVLLM, &config.CreatedAt, &config.UpdatedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -169,13 +176,43 @@ func UpdateModelConfig(configID int, updates map[string]interface{}) (bool, erro
 	for key, value := range updates {
 		// Handle array types
 		if key == "api_urls" {
-			if urls, ok := value.([]string); ok {
-				urlsJSON, _ := json.Marshal(urls)
-				setClause += ", api_urls = ?"
-				args = append(args, string(urlsJSON))
+			var urls []string
+			// Try to convert from []string
+			if strSlice, ok := value.([]string); ok {
+				urls = strSlice
+			} else if ifaceSlice, ok := value.([]interface{}); ok {
+				// Convert from []interface{} to []string
+				urls = make([]string, len(ifaceSlice))
+				for i, v := range ifaceSlice {
+					if str, ok := v.(string); ok {
+						urls[i] = str
+					} else {
+						// Convert to string if possible
+						urls[i] = fmt.Sprintf("%v", v)
+					}
+				}
+			} else {
+				// Skip if we can't convert
 				continue
 			}
+
+			urlsJSON, err := json.Marshal(urls)
+			if err != nil {
+				return false, fmt.Errorf("failed to marshal api_urls: %w", err)
+			}
+			setClause += ", api_urls = ?"
+			args = append(args, string(urlsJSON))
+			continue
 		}
+
+		// Skip any slice/array types that aren't api_urls to prevent SQL errors
+		// This handles edge cases where complex types might slip through
+		switch value.(type) {
+		case []interface{}, []string:
+			// Skip unexpected array types
+			continue
+		}
+
 		setClause += ", " + key + " = ?"
 		args = append(args, value)
 	}

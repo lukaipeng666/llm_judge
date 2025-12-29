@@ -33,21 +33,6 @@ const { Title, Text } = Typography
 const { Option } = Select
 const { TextArea } = Input
 
-// 评分函数描述
-const scoringFunctionDescriptions = {
-  rouge: 'ROUGE 评分，计算文本相似度 (ROUGE-1, ROUGE-2, ROUGE-L)',
-  exact_match: '精确匹配评分，检查输出是否与参考答案完全一致',
-  json_check: 'JSON 格式检查，验证输出的 JSON 格式是否正确',
-  equal_check: '相等检查，比较输出与参考答案是否相等',
-  list_check: '列表检查，验证输出列表与参考答案的匹配度',
-  llm_judge_with_answer: 'LLM 裁判评分，使用大模型判断答案质量',
-  box: 'Box 格式评分，提取并比较 boxed 格式的数值',
-  reject: '拒识评分，评估模型的拒识能力',
-  agent_instruct_score: 'Agent 指令评分，评估 Agent 任务完成度',
-  ifeval_full_scorer: 'IFEval 完整评分，评估指令遵循能力',
-  toolbench_evaluation: 'ToolBench 评估，评估工具调用能力',
-}
-
 function EvaluationPage() {
   const navigate = useNavigate()
   const [form] = Form.useForm()
@@ -82,6 +67,11 @@ function EvaluationPage() {
       console.error('Failed to load model configs:', err)
     })
   }, [])
+
+  // 调试：监听 scoringFunctions 变化
+  useEffect(() => {
+    console.log('[DEBUG] scoringFunctions changed:', scoringFunctions)
+  }, [scoringFunctions])
 
   useEffect(() => {
     form.setFieldsValue(formData)
@@ -130,9 +120,10 @@ function EvaluationPage() {
         api_key: modelConfig.api_key || 'sk-xxx',
         // 处理 model（为了匹配后端的 string 类型）
         model: Array.isArray(values.model) ? values.model[0] : values.model,
-        // 确保数字字段为整数
+        // 确保数字字段为整数，0表示使用全部数据
         max_workers: parseInt(values.max_workers) || 4,
         badcase_threshold: parseFloat(values.badcase_threshold) || 1,
+        sample_size: (parseInt(values.sample_size) || 0),
         // 从模型配置中获取max_tokens和timeout，如果没有则使用表单值
         max_tokens: parseInt(values.max_tokens) || modelConfig.max_tokens || 1024,
         timeout: parseInt(values.timeout) || modelConfig.timeout || 10,
@@ -145,8 +136,9 @@ function EvaluationPage() {
         scoring_module: './function_register/plugin.py',
         report_format: 'json, txt, badcases',
       }
-      
+
       console.log('[DEBUG] Submitting config:', config)
+      console.log('[DEBUG] sample_size value:', config.sample_size, 'type:', typeof config.sample_size)
       const result = await startEvaluation(config)
       message.success(`评测任务已创建，任务ID: ${result.task_id}`)
       navigate('/tasks')
@@ -277,16 +269,22 @@ function EvaluationPage() {
                   loading={loading}
                   optionFilterProp="children"
                 >
-                  {scoringFunctions.map(func => (
-                    <Option key={func} value={func}>
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{func}</div>
-                        <Text type="secondary" style={{ fontSize: 12 }}>
-                          {scoringFunctionDescriptions[func] || '自定义评分函数'}
-                        </Text>
-                      </div>
-                    </Option>
-                  ))}
+                  {scoringFunctions.map(func => {
+                    // 兼容旧格式（字符串）和新格式（对象）
+                    const funcName = typeof func === 'string' ? func : func.name
+                    const funcDesc = typeof func === 'object' ? func.description : '自定义评分函数'
+
+                    return (
+                      <Option key={funcName} value={funcName}>
+                        <div>
+                          <div style={{ fontWeight: 500 }}>{funcName}</div>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {funcDesc}
+                          </Text>
+                        </div>
+                      </Option>
+                    )
+                  })}
                 </Select>
               </Form.Item>
             </Col>

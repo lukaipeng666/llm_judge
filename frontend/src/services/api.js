@@ -37,7 +37,14 @@ api.interceptors.response.use(
 
     // 处理401未授权错误
     if (status === 401) {
-      // 清除token并跳转到登录页
+      const requestUrl = error.config?.url || ''
+
+      // 如果是登录接口的401错误，不要自动刷新（让前端处理错误提示）
+      if (requestUrl.includes('/auth/login')) {
+        return Promise.reject(new Error(errorMsg))
+      }
+
+      // 其他401错误才清除token并跳转到登录页
       localStorage.removeItem('llm_judge_token')
       localStorage.removeItem('llm_judge_user')
       window.location.href = '/login'

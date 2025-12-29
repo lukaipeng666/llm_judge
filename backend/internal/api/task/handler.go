@@ -89,6 +89,9 @@ func StartEvaluation(c *gin.Context) {
 		config.TopP = modelConfig.TopP
 	}
 
+	// Use is_vllm from model config (convert int to bool)
+	config.IsVLLM = modelConfig.IsVLLM == 1
+
 	// Start evaluation
 	taskID, err := service.StartEvaluation(userID, &config)
 	if err != nil {

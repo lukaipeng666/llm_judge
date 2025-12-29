@@ -44,7 +44,7 @@ const useStore = create((set, get) => ({
     report_dir: './reports',
     report_format: 'json, txt, badcases',
     test_mode: false,
-    sample_size: 0,
+    sample_size: 2147483648,
     checkpoint_path: '',
     checkpoint_interval: 32,
     resume: false,
@@ -139,7 +139,7 @@ const useStore = create((set, get) => ({
       report_dir: './reports',
       report_format: 'json, txt, badcases',
       test_mode: false,
-      sample_size: 0,
+      sample_size: 2147483648,
       checkpoint_path: '',
       checkpoint_interval: 32,
       resume: false,
@@ -157,8 +157,11 @@ const useStore = create((set, get) => ({
     try {
       set({ loading: true })
       const res = await api.getScoringFunctions()
-      set({ scoringFunctions: res.scoring_functions, loading: false, error: null })
+      console.log('[DEBUG] fetchScoringFunctions response:', res)
+      console.log('[DEBUG] scoring_functions:', res.scoring_functions)
+      set({ scoringFunctions: res.scoring_functions || [], loading: false, error: null })
     } catch (err) {
+      console.error('[ERROR] fetchScoringFunctions failed:', err)
       set({ error: err.message, loading: false })
     }
   },
@@ -189,7 +192,7 @@ const useStore = create((set, get) => ({
       set({ loading: true })
       const res = await api.getUserDataFiles()
       console.log('[DEBUG] fetchUserDataFiles response:', res)
-      set({ userDataFiles: res.data_files, loading: false, error: null })
+      set({ userDataFiles: res.data_files || [], loading: false, error: null })
     } catch (err) {
       console.error('[ERROR] fetchUserDataFiles failed:', err.message)
       set({ error: err.message, loading: false })

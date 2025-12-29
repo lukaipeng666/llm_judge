@@ -55,7 +55,7 @@ export default function AdminDashboard() {
         setLoading(true)
         try {
             const res = await getAdminUsers()
-            setUsers(res.users)
+            setUsers(res.users || [])
         } catch (err) {
             message.error('Failed to load users: ' + err.message)
         } finally {
@@ -67,7 +67,7 @@ export default function AdminDashboard() {
         setLoading(true)
         try {
             const res = await getAdminTasks()
-            setTasks(res.tasks)
+            setTasks(res.tasks || [])
         } catch (err) {
             message.error('Failed to load tasks: ' + err.message)
         } finally {
@@ -79,7 +79,7 @@ export default function AdminDashboard() {
         setLoading(true)
         try {
             const res = await getAdminData()
-            setDataFiles(res.data)
+            setDataFiles(res.data || [])
         } catch (err) {
             message.error('Failed to load data files: ' + err.message)
         } finally {
@@ -153,12 +153,22 @@ export default function AdminDashboard() {
     const handleSaveModelConfig = async () => {
         try {
             const values = await modelConfigForm.validateFields()
+
+            // Build config data with explicit type conversions
             const configData = {
-                ...values,
-                api_urls: values.api_urls.split('\n').map(url => url.trim()).filter(Boolean),
-                is_active: values.is_active ? 1 : 0
+                model_name: String(values.model_name),
+                api_urls: values.api_urls.split('\n').map(url => String(url.trim())).filter(Boolean),
+                api_key: String(values.api_key || ''),
+                temperature: Number(values.temperature),
+                top_p: Number(values.top_p),
+                max_tokens: Number(values.max_tokens),
+                timeout: Number(values.timeout),
+                max_concurrency: Number(values.max_concurrency),
+                description: String(values.description || ''),
+                is_active: values.is_active ? 1 : 0,
+                is_vllm: values.is_vllm ? 1 : 0
             }
-            
+
             if (editingConfig) {
                 await updateAdminModelConfig(editingConfig.id, configData)
                 message.success('Model config updated successfully')
@@ -428,6 +438,17 @@ export default function AdminDashboard() {
             render: (val) => val || 10
         },
         {
+            title: 'Is VLLM',
+            dataIndex: 'is_vllm',
+            key: 'is_vllm',
+            width: 90,
+            render: (isVLLM) => (
+                <Tag color={isVLLM ? 'blue' : 'green'}>
+                    {isVLLM ? 'VLLM' : 'OpenAI'}
+                </Tag>
+            )
+        },
+        {
             title: 'Status',
             dataIndex: 'is_active',
             key: 'is_active',
@@ -444,9 +465,9 @@ export default function AdminDashboard() {
             width: 150,
             render: (_, record) => (
                 <Space>
-                    <Button 
-                        icon={<EditOutlined />} 
-                        size="small" 
+                    <Button
+                        icon={<EditOutlined />}
+                        size="small"
                         onClick={() => handleOpenModelConfigModal(record)}
                     >
                         Edit
@@ -566,7 +587,7 @@ export default function AdminDashboard() {
                             <div style={{ padding: '16px 24px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between' }}>
                                 <Space>
                                     <Text strong>{activeTab.toUpperCase()}</Text>
-                                    <Tag>{activeTab === 'users' ? users.length : (activeTab === 'tasks' ? tasks.length : (activeTab === 'data' ? dataFiles.length : modelConfigs.length))} Total</Tag>
+                                    <Tag>{activeTab === 'users' ? (users?.length || 0) : (activeTab === 'tasks' ? (tasks?.length || 0) : (activeTab === 'data' ? (dataFiles?.length || 0) : (modelConfigs?.length || 0)))} Total</Tag>
                                 </Space>
                                 <Space>
                                     {activeTab === 'models' && (
@@ -594,7 +615,7 @@ export default function AdminDashboard() {
                             </div>
 
                             <Table
-                                dataSource={activeTab === 'users' ? users : (activeTab === 'tasks' ? tasks : (activeTab === 'data' ? dataFiles : modelConfigs))}
+                                dataSource={activeTab === 'users' ? (users || []) : (activeTab === 'tasks' ? (tasks || []) : (activeTab === 'data' ? (dataFiles || []) : (modelConfigs || [])))}
                                 columns={activeTab === 'users' ? userColumns : (activeTab === 'tasks' ? taskColumns : (activeTab === 'data' ? dataColumns : modelConfigColumns))}
                                 rowKey="id"
                                 loading={loading}
@@ -629,6 +650,7 @@ export default function AdminDashboard() {
                         max_tokens: 1024,
                         timeout: 10,
                         max_concurrency: 10,
+                        is_vllm: true,
                         is_active: true
                     }}
                 >
@@ -695,6 +717,14 @@ export default function AdminDashboard() {
                         label="Description (Optional)"
                     >
                         <Input.TextArea rows={2} placeholder="Model description" />
+                    </Form.Item>
+                    <Form.Item
+                        name="is_vllm"
+                        label="Use VLLM Format"
+                        valuePropName="checked"
+                        tooltip="Enable to use VLLM-specific parameters (do_sample, chat_template_kwargs). Disable for standard OpenAI-compatible API."
+                    >
+                        <Switch />
                     </Form.Item>
                     <Form.Item
                         name="is_active"

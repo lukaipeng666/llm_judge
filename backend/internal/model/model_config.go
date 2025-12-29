@@ -13,6 +13,7 @@ type ModelConfig struct {
 	MaxConcurrency int       `json:"max_concurrency" db:"max_concurrency"`
 	Description    string    `json:"description" db:"description"`
 	IsActive       int       `json:"is_active" db:"is_active"` // 0 or 1
+	IsVLLM         int       `json:"is_vllm" db:"is_vllm"`     // 0 or 1, default 1
 	CreatedAt      string    `json:"created_at" db:"created_at"`
 	UpdatedAt      string    `json:"updated_at" db:"updated_at"`
 }
@@ -28,6 +29,7 @@ type ModelConfigCreate struct {
 	Timeout        int       `json:"timeout"`
 	MaxConcurrency int       `json:"max_concurrency"`
 	Description    string    `json:"description"`
+	IsVLLM         int       `json:"is_vllm"` // 0 or 1, default 1
 }
 
 // ModelConfigUpdate represents update model config request
@@ -42,4 +44,5 @@ type ModelConfigUpdate struct {
 	MaxConcurrency *int      `json:"max_concurrency,omitempty"`
 	Description    *string   `json:"description,omitempty"`
 	IsActive       *int      `json:"is_active,omitempty"`
+	IsVLLM         *int      `json:"is_vllm,omitempty"`
 }

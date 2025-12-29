@@ -25,6 +25,12 @@ func InitDB(dbPath string) error {
 			return
 		}
 
+		// Enable foreign key constraints
+		if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
+			err = fmt.Errorf("failed to enable foreign keys: %w", err)
+			return
+		}
+
 		// Set connection pool parameters
 		db.SetMaxOpenConns(25)
 		db.SetMaxIdleConns(5)
@@ -54,14 +60,21 @@ func InitDB(dbPath string) error {
 
 // initializeAdminUser creates the admin user if it doesn't exist
 func initializeAdminUser() error {
+	zap.L().Debug("Starting admin user initialization")
+
 	// Get admin config
 	configData := config.Get()
 	if configData == nil {
+		zap.L().Error("Config not loaded")
 		return fmt.Errorf("config not loaded")
 	}
 
 	adminUsername := configData.Admin.Username
 	adminPasswordHash := configData.Admin.PasswordHash
+
+	zap.L().Debug("Admin config loaded",
+		zap.String("username", adminUsername),
+		zap.String("password_hash", adminPasswordHash))
 
 	// Check if admin user already exists
 	var exists int
@@ -73,14 +86,18 @@ func initializeAdminUser() error {
 		return nil
 	} else if err != sql.ErrNoRows {
 		// Some other error occurred
+		zap.L().Error("Failed to check if admin user exists", zap.Error(err))
 		return fmt.Errorf("failed to check if admin user exists: %w", err)
 	}
+
+	zap.L().Debug("Admin user does not exist, creating...")
 
 	// Admin user doesn't exist, create it
 	now := time.Now().Format(time.RFC3339)
 	insertQuery := `INSERT INTO users (username, password_hash, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`
 	_, err = db.Exec(insertQuery, adminUsername, adminPasswordHash, "admin@llm-judge.com", now, now)
 	if err != nil {
+		zap.L().Error("Failed to create admin user", zap.Error(err))
 		return fmt.Errorf("failed to create admin user: %w", err)
 	}
 
@@ -171,6 +188,7 @@ func createTables() error {
 			max_concurrency INTEGER DEFAULT 10,
 			description TEXT,
 			is_active INTEGER DEFAULT 1,
+			is_vllm INTEGER DEFAULT 1,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,

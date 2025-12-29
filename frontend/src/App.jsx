@@ -24,6 +24,23 @@ function PrivateRoute({ children }) {
   return children
 }
 
+// 管理员路由守卫组件
+function AdminRoute({ children }) {
+  const user = useStore(state => state.user)
+  const isAuthenticated = useStore(state => state.isAuthenticated)
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  // 检查用户是否是管理员
+  if (!user || user.username !== 'admin') {
+    return <Navigate to="/" replace />
+  }
+
+  return children
+}
+
 // Token自动登录组件
 function AutoLoginHandler() {
   const location = useLocation()
@@ -107,9 +124,9 @@ function App() {
 
         {/* Admin Route */}
         <Route path="/admin" element={
-          <PrivateRoute>
+          <AdminRoute>
             <AdminDashboard />
-          </PrivateRoute>
+          </AdminRoute>
         } />
       </Routes>
     </ErrorBoundary>

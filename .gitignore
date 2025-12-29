@@ -85,9 +85,18 @@ logs/*.pid
 data/*.jsonl
 data/*.json
 !data/.gitkeep
+data_raw/
+
+# Large report files
+reports/**/*.json
+reports/**/*.jsonl
 
 # Temporary files
 *.tmp
 *.swp
 *.swo
 *~
+
+# Scripts and temporary data
+backend/scripts/
+*.bak

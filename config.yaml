@@ -36,7 +36,7 @@ llm_service:
 # 管理员配置
 admin:
   username: "admin"
-  password_hash: "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # SHA256 hash of 'admin123456'
+  password_hash: "4baf5a3660a29ab8980b25ad2f90290a9eec46e94dbcfafbe533e4b110a76387"  # SHA256 hash of 'suanfazu2025'
 
 # 日志配置
 log:

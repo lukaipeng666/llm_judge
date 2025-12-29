@@ -90,7 +90,7 @@ export default function DataManagePage() {
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i]
   }
 
-  if (loading && !userDataFiles.length) {
+  if (loading && (!userDataFiles || userDataFiles.length === 0)) {
     return <div className="loading">加载中...</div>
   }
 
@@ -119,7 +119,7 @@ export default function DataManagePage() {
       {error && <div className="error-message">{error}</div>}
 
       <div className="data-list">
-        {userDataFiles.length === 0 ? (
+        {!userDataFiles || userDataFiles.length === 0 ? (
           <div className="empty-state">
             <p>暂无数据文件</p>
             <p className="hint">点击上方按钮上传你的第一个数据文件</p>

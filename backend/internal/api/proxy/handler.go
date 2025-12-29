@@ -255,9 +255,13 @@ func callOpenAIAPI(req *model.ModelCallRequest) (string, error) {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
+
+	// For OpenAI-compatible APIs
+	// Set Authorization header only if API key is provided and not the default placeholder
 	if req.APIKey != "" && req.APIKey != "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" {
 		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 	}
+	// Note: Some APIs may not require authentication and will work without Authorization header
 
 	// Send request
 	resp, err := client.Do(httpReq)
