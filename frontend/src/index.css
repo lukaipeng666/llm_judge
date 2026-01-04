@@ -1,0 +1,175 @@
+/* Global Styles - Apple UI Inspired */
+:root {
+  --primary-color: #007AFF;
+  --success-color: #34C759;
+  --warning-color: #FF9500;
+  --error-color: #FF3B30;
+  --bg-color: #F5F5F7;
+  --card-bg: #FFFFFF;
+  --text-color: #1D1D1F;
+  --text-secondary: #86868B;
+  --border-color: #E5E5EA;
+  
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(255, 255, 255, 0.5);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.1);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+/* Scrollbar Styling - Minimalist */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D1D1D6;
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #8E8E93;
+}
+
+/* Glassmorphism Utilities */
+.glass-effect {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+}
+
+/* Page Container */
+.page-container {
+  padding: 32px;
+  max-width: 1440px;
+  margin: 0 auto;
+  min-height: calc(100vh - 64px);
+}
+
+/* Typography Enhancements */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-color);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.ant-form-item-label > label {
+  font-weight: 500;
+  color: var(--text-color) !important;
+}
+
+/* Card Shadows & Interactiveness */
+.card-hoverable {
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.card-hoverable:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg) !important;
+}
+
+/* Stat Cards - Refined Gradients */
+/* Using more subtle, pastel-like gradients for a modern look */
+.stat-card {
+  border-radius: 16px;
+  padding: 24px;
+  color: white;
+  box-shadow: var(--shadow-md);
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card-blue {
+  background: linear-gradient(135deg, #007AFF 0%, #00C6FF 100%);
+}
+
+.stat-card-green {
+  background: linear-gradient(135deg, #34C759 0%, #30D158 100%);
+}
+
+.stat-card-orange {
+  background: linear-gradient(135deg, #FF9500 0%, #FFCC00 100%);
+}
+
+.stat-card-purple {
+  background: linear-gradient(135deg, #5856D6 0%, #AF52DE 100%);
+}
+
+.stat-card-red {
+  background: linear-gradient(135deg, #FF3B30 0%, #FF2D55 100%);
+}
+
+/* Table Refinements */
+.ant-table-wrapper .ant-table-container {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.ant-table-thead > tr > th {
+  background: #F2F2F7 !important;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ant-table-tbody > tr:hover > td {
+  background-color: #F5F5F7 !important;
+}
+
+/* Status Indicators */
+.score-high {
+  color: var(--success-color);
+  font-weight: 600;
+}
+
+.score-medium {
+  color: var(--warning-color);
+  font-weight: 600;
+}
+
+.score-low {
+  color: var(--error-color);
+  font-weight: 600;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .page-container {
+    padding: 16px;
+  }
+}

@@ -1,0 +1,123 @@
+# Virtual environments
+.venv/
+venv/
+env/
+**/lib/
+**/include/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+web-ui/frontend/dist/
+web-ui/frontend/node_modules/
+/Users/yunlongdeng/Zhuiyi/boweneval/web-ui/frontend/node_modules
+__pycache__/
+*.pyc
+
+# Go build outputs
+backend/bin/
+backend/*.exe
+backend/*.exe~
+backend/*.dll
+backend/*.so
+backend/*.dylib
+*.test
+*.out
+
+# Python
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Node
+node_modules/
+frontend/dist/
+frontend/node_modules/
+frontend/.vite/
+frontend/package-lock.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.sqlite
+**/database/service/*.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Redis
+dump.rdb
+
+# PID files
+*.pid
+logs/*.pid
+
+# Data files
+data/*.jsonl
+data/*.json
+!data/.gitkeep
+data_raw/
+
+# Large report files
+reports/**/*.json
+reports/**/*.jsonl
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# Scripts and temporary data
+backend/scripts/
+*.bak
+
+# Additional virtual environment files
+**/.venv/**
+**/__pycache__/
+
+# Large files (images, datasets, etc.)
+*.png
+*.jpg
+*.jpeg
+*.gif
+!*.png  # Uncomment to allow images if needed
+
+# Model files and large binaries
+*.bin
+*.safetensors
+*.pt
+*.pth
+*.onnx
+*.pkl
